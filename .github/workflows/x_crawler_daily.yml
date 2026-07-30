@@ -23,8 +23,7 @@ jobs:
       - name: Run crawler
         env:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
-          BQ_SERVICE_ACCOUNT: ${{ secrets.BQ_SERVICE_ACCOUNT }}
-          BQ_PRIVATE_KEY: ${{ secrets.BQ_PRIVATE_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
         run: python x_crawler.py
 
       - name: Upload run summary

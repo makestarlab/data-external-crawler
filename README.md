@@ -23,12 +23,24 @@ K-pop 아티스트/셀러 X(Twitter) 계정 일일 포스팅 수집 크롤러. G
 | Secret            | 설명                                              |
 |--------------------|---------------------------------------------------|
 | `X_BEARER_TOKEN`   | X API v2 Bearer Token                              |
-| `BQ_SERVICE_ACCOUNT` | BigQuery 서비스 계정 이메일 (client_email)         |
-| `BQ_PRIVATE_KEY`   | 위 서비스 계정의 private key (PEM 원문)            |
+| `GCP_SERVICE_ACCOUNT_JSON` | BigQuery 서비스 계정 **JSON 키 파일 전체 내용**을 그대로 붙여넣은 값 |
+
+`GCP_SERVICE_ACCOUNT_JSON`은 `client_email`/`private_key`를 따로 잘라서 넣지 말고,
+GCP 콘솔에서 다운로드한 키 파일(`*.json`)을 **열어서 전체를 그대로 복사해 붙여넣는다.**
+따로 잘라 넣으면 `private_key`의 개행이 깨져서 `ValueError: Unable to load PEM file
+... MalformedFraming` 에러가 나기 쉽다 (실제로 한 번 겪었던 문제).
+
+GitHub CLI가 있다면 이렇게 파일에서 바로 등록하는 것이 가장 안전하다 (복사/붙여넣기 생략):
+```bash
+gh secret set GCP_SERVICE_ACCOUNT_JSON --repo makestarlab/data-external-crawler < /path/to/key.json
+```
 
 서비스 계정은 `makestar-dw.makestar_ax` 데이터셋에 대해 최소 다음 권한이 필요하다:
 - `x_posts_raw`, `x_crawl_state`: 조회 + 데이터 수정 (BigQuery Data Editor 수준)
 - 프로젝트 레벨: 쿼리/로드 잡 실행 권한 (BigQuery Job User)
+
+구버전 호환용으로 `BQ_SERVICE_ACCOUNT`(client_email) + `BQ_PRIVATE_KEY`(PEM) 두 시크릿을
+따로 넣는 경로도 코드에 남아있지만, 위 문제 때문에 권장하지 않는다.
 
 ## 스케줄
 
