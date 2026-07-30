@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -116,12 +117,27 @@ def load_entity_lookup(bq):
     return name_to_id, id_to_name, "\n".join(sorted(set(artist_roster_lines)))
 
 
+_PAREN_RE = re.compile(r"^(.*?)\s*\((.*)\)\s*$")
+
+
 def resolve_entity_id(name, name_to_id, expect_type=None):
+    """이름 -> entity_id 조회. artist_roster에는 "한글명 (영문명)" 형태로 넘기는데,
+    LLM이 그 형태를 그대로 echo하는 경우가 많아서 (예: "있지 (ITZY)") 정확히
+    "이름" 또는 "영문명" 단독 문자열로만 인덱싱된 name_to_id에서 못 찾는 문제가 있었다.
+    괄호를 벗겨 양쪽 다 재시도한다."""
     if not name:
         return None
-    hit = name_to_id.get(name.strip().lower())
-    if hit and (expect_type is None or hit[1] == expect_type):
-        return hit[0]
+    candidates = [name.strip()]
+    m = _PAREN_RE.match(name.strip())
+    if m:
+        candidates.append(m.group(1).strip())
+        candidates.append(m.group(2).strip())
+    for cand in candidates:
+        if not cand:
+            continue
+        hit = name_to_id.get(cand.lower())
+        if hit and (expect_type is None or hit[1] == expect_type):
+            return hit[0]
     return None
 
 
