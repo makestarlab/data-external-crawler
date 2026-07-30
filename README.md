@@ -114,6 +114,13 @@ GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서 `curati
 - **제약**: X API `GET /2/users/:id/tweets`는 계정당 최근 3200건까지만 반환하므로, 한 달치
   백필에는 20페이지(2000건)면 충분하지만 트윗이 매우 많은 판매처 계정은 이론상 그 이전
   데이터를 API로 아예 가져올 수 없을 수 있다.
+- **알려진 이슈 (2026-07-30 첫 백필 실행)**: 72개 계정 x 한 달치 백로그를 큐레이션하는 데
+  Claude 호출이 많아 원래 타임아웃(60분)을 넘겨 `Error: The operation was canceled.`로
+  워크플로가 중간에 잘렸다. 처리 못한 계정의 raw 행은 `is_curated`가 `NULL`로 남아있어
+  데이터 유실은 없고, **`X Crawler Daily`(또는 백필 워크플로)를 다시 실행하면 큐레이션이
+  남은 부분부터 자동으로 이어서 처리된다** (`curate_events.py`는 매 실행마다 `is_curated
+  IS NOT TRUE`인 행 전체를 다시 훑으므로 계정 단위로 재시작 가능). 재발 방지로 두 워크플로의
+  `timeout-minutes`를 90/180분으로 늘려뒀다.
 
 ## 알려진 제약 / 후속 과제
 

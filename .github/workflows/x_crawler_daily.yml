@@ -14,7 +14,11 @@ on:
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 원래 20분이었는데, 백필 이후 밀린 큐레이션 백로그(계정당 여러 번 Claude 호출)가 있으면
+    # 20분으로는 부족해서 "Error: The operation was canceled." 로 중간에 잘리는 문제가 있었다
+    # (2026-07-30). 큐레이션은 계정 단위로 처리 완료된 만큼만 is_curated=TRUE로 남기고 재시작
+    # 가능하지만, 애초에 여유 있게 잡아서 한 번에 끝나도록 90분으로 늘림.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

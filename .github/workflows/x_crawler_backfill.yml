@@ -23,7 +23,10 @@ on:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 계정 72개 x 최대 한달치 백로그를 통째로 큐레이션하면 Claude 호출이 많아 60분으로는
+    # 부족했다 (2026-07-30, 첫 실행이 "Error: The operation was canceled."로 잘림 - 원인은
+    # 이 60분 타임아웃으로 추정). 여유 있게 180분으로 늘림.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
