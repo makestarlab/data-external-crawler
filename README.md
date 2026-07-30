@@ -1,10 +1,16 @@
 # data-external-crawler
 
-K-pop 아티스트/셀러 X(Twitter) 계정 일일 포스팅 수집 크롤러. GitHub Actions에서 매일 1회 실행되며,
-결과를 BigQuery `makestar-dw.makestar_ax.x_posts_raw`에 필터링 없이 적재한다 (ELT 중 L 단계).
-큐레이션(유의미한 포스팅 선별)은 별도의 후속 배치가 담당하며 아직 이 저장소에는 포함되어 있지 않다.
+K-pop 아티스트/셀러 X(Twitter) 계정 일일 포스팅 수집 크롤러 + 큐레이션 파이프라인.
+GitHub Actions에서 매일 1회 실행되며:
+
+1. **`x_crawler.py`**: X API에서 신규 포스팅을 필터링 없이 수집해 BigQuery
+   `makestar-dw.makestar_ax.x_posts_raw`에 적재한다 (ELT 중 L 단계).
+2. **`curate_events.py`**: `x_posts_raw`의 미처리 포스팅을 Claude API로 읽어 아티스트명/
+   앨범명/판매처/이벤트명을 추출하고, `x_event_announcements`에 적재한다 (ELT 중 T 단계).
 
 ## 아키텍처
+
+### 1단계 - 크롤링 (`x_crawler.py`)
 
 - **상태 저장소(단일 소스)**: BigQuery `makestar_ax.x_crawl_state`
   - 계정별 `last_tweet_id`(since_id 워터마크)를 여기서 읽고 실행 후 갱신한다.
@@ -18,12 +24,35 @@ K-pop 아티스트/셀러 X(Twitter) 계정 일일 포스팅 수집 크롤러. G
 - **상태 갱신**: 파라미터 바인딩된 MERGE 쿼리 (`ArrayQueryParameter` + `StructQueryParameter`)를
   사용한다. 마찬가지로 SQL 텍스트 조립을 피하기 위함이다.
 
+### 2단계 - 큐레이션 (`curate_events.py`)
+
+- **입력**: `x_posts_raw` 중 `is_curated IS NOT TRUE`인 행 (계정별로 그룹핑해서 처리).
+- **추출**: Claude API(`extract_event_announcements` tool 강제 호출)로 계정당 한 번씩 호출해서
+  `artist_name` / `album_or_title` / `seller_name` / `event_name` / `is_relevant`(판매·이벤트
+  공지가 맞는지) / `event_key`(그룹핑용 정규화 키)를 추출한다.
+  - ARTIST 계정(예: `ATEEZofficial`)은 artist_name을 entity_master 값으로 고정해서 프롬프트에
+    넘긴다.
+  - SELLER 계정(예: `weverseshop`, `the_FANSSHOP`)은 여러 아티스트의 상품을 올리므로, 본문에서
+    실제 아티스트를 읽어내야 한다. entity_master의 전체 아티스트 명단을 참고 목록으로 프롬프트에
+    같이 넣어 정규화를 돕는다.
+- **동일 이벤트 반복 게시 그룹핑**: 계정별로 최근 `RECENT_WINDOW_DAYS`(기본 21일) 이내의
+  대표 이벤트(`is_representative=TRUE`) 목록을 프롬프트에 함께 제공해서, 같은 이벤트가 이어지면
+  LLM이 기존 `event_key`를 그대로 재사용하도록 유도한다. 같은 배치 안에서 신규로 처음 등장하는
+  `event_key`는 새 `event_group_id`를 만들고 그 중 가장 이른 게시물만 `is_representative=TRUE`로
+  표시한다.
+  - 분석 시에는 원본 테이블을 직접 필터링(`WHERE is_relevant AND is_representative`)하거나,
+    이 조건이 이미 적용된 뷰 `x_event_announcements_curated`를 사용하면 된다.
+  - `is_relevant=false`인 행(잡담/일상 트윗 등)도 감사·프롬프트 튜닝 목적으로 테이블에는 남긴다.
+- **재시도 안전성**: 계정 하나의 Claude 호출이나 적재가 실패해도 해당 계정의 raw 행은
+  `is_curated=FALSE`로 남아 다음 실행에서 자동으로 재처리된다.
+
 ## 필요한 GitHub Secrets
 
 | Secret            | 설명                                              |
 |--------------------|---------------------------------------------------|
 | `X_BEARER_TOKEN`   | X API v2 Bearer Token                              |
 | `GCP_SERVICE_ACCOUNT_JSON` | BigQuery 서비스 계정 **JSON 키 파일 전체 내용**을 그대로 붙여넣은 값 |
+| `ANTHROPIC_API_KEY` | 큐레이션 단계(Claude API)용 키 |
 
 `GCP_SERVICE_ACCOUNT_JSON`은 `client_email`/`private_key`를 따로 잘라서 넣지 말고,
 GCP 콘솔에서 다운로드한 키 파일(`*.json`)을 **열어서 전체를 그대로 복사해 붙여넣는다.**
@@ -33,21 +62,34 @@ GCP 콘솔에서 다운로드한 키 파일(`*.json`)을 **열어서 전체를 �
 GitHub CLI가 있다면 이렇게 파일에서 바로 등록하는 것이 가장 안전하다 (복사/붙여넣기 생략):
 ```bash
 gh secret set GCP_SERVICE_ACCOUNT_JSON --repo makestarlab/data-external-crawler < /path/to/key.json
+gh secret set ANTHROPIC_API_KEY --repo makestarlab/data-external-crawler
 ```
 
 서비스 계정은 `makestar-dw.makestar_ax` 데이터셋에 대해 최소 다음 권한이 필요하다:
-- `x_posts_raw`, `x_crawl_state`: 조회 + 데이터 수정 (BigQuery Data Editor 수준)
+- `x_posts_raw`, `x_crawl_state`, `x_event_announcements`, `entity_master`: 조회 + 데이터 수정
+  (BigQuery Data Editor 수준 - `entity_master`는 조회만 하면 되지만 편의상 같은 role로 충분)
 - 프로젝트 레벨: 쿼리/로드 잡 실행 권한 (BigQuery Job User)
 
 구버전 호환용으로 `BQ_SERVICE_ACCOUNT`(client_email) + `BQ_PRIVATE_KEY`(PEM) 두 시크릿을
 따로 넣는 경로도 코드에 남아있지만, 위 문제 때문에 권장하지 않는다.
 
+`curate_events.py`의 모델은 기본값 `claude-haiku-4-5-20251001`(Claude Haiku 4.5)이다.
+ax팀 피드백: 게시글 요약/가공 용도라 haiku로는 품질이 부족할 수 있으니 일단 haiku로 시작하고,
+결과가 안 좋으면 상위 모델(Sonnet 이상)로 바꿔보라는 의견을 받았다. 코드 수정 없이 바로
+비교 테스트하려면 GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서
+`curation_model` 입력값에 `claude-sonnet-5` 등을 넣고 수동 실행하면 된다(비워두면 기본값 사용).
+계속 상위 모델을 쓰기로 결정했다면 workflow yaml의 `CURATION_MODEL` 기본값을 바꿔서 고정하면 된다.
+
 ## 스케줄
 
-매일 23:00 UTC (08:00 KST) 실행. `workflow_dispatch`로 수동 실행도 가능.
+매일 21:00 UTC (06:00 KST) 실행. `workflow_dispatch`로 수동 실행도 가능.
 
 ## 알려진 제약 / 후속 과제
 
 - `x_crawl_targets.json`은 entity_master의 스냅샷이라 계정이 추가/제외되면 수동으로
   다시 내보내 커밋해야 한다. entity_master를 직접 쿼리하도록 바꾸는 것이 다음 개선 후보.
-- 큐레이션(raw → 의미있는 이벤트/공지 선별) 단계는 아직 미구현.
+- 큐레이션의 이벤트 그룹핑은 "같은 계정, 최근 21일" 범위 내에서만 기존 키 재사용을 시도한다.
+  다른 계정(예: 아티스트 본인 계정과 판매처 계정)이 같은 이벤트를 각자 공지하는 경우는 현재
+  버전에서는 서로 다른 그룹으로 잡힌다 (계정 간 교차 그룹핑은 후속 과제).
+- LLM 추출 결과의 품질(특히 앨범명/이벤트명 정확도)은 실제 데이터로 검증이 더 필요하다.
+  `extraction_note`/`confidence` 필드로 감사하면서 프롬프트를 다듬어갈 것.

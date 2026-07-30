@@ -12,12 +12,8 @@ X (Twitter) 크롤러 - K-pop 아티스트/셀러 계정 일일 포스팅 수집
 
 실행 방식: GitHub Actions에서 일 1회 cron으로 실행되는 것을 전제로 작성됨.
   필요한 환경변수(GitHub Secrets):
-    - X_BEARER_TOKEN        : X API v2 Bearer Token
-    - GCP_SERVICE_ACCOUNT_JSON : 서비스 계정 JSON 키 파일 "전체 내용"을 그대로 붙여넣은 시크릿.
-                                 (권장 방식 - client_email/private_key를 따로 잘라서 넣으면
-                                  개행/따옴표가 깨지기 쉬워 PEM 파싱 에러가 자주 난다)
-  구버전 호환용(비권장, 위 방식이 안 될 때만):
-    - BQ_SERVICE_ACCOUNT, BQ_PRIVATE_KEY : client_email / private_key를 따로 넣는 방식
+    - X_BEARER_TOKEN           : X API v2 Bearer Token
+    - GCP_SERVICE_ACCOUNT_JSON : BigQuery 인증 (bq_common.py 참고)
 """
 import json
 import logging
@@ -28,7 +24,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from google.cloud import bigquery
-from google.oauth2 import service_account
+
+from bq_common import PROJECT_ID, DATASET, get_bq_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,8 +33,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("x_crawler")
 
-PROJECT_ID = "makestar-dw"
-DATASET = "makestar_ax"
 STATE_TABLE = f"{PROJECT_ID}.{DATASET}.x_crawl_state"
 RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 TARGETS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x_crawl_targets.json")
@@ -51,54 +46,6 @@ KST = timezone(timedelta(hours=9))
 # ---------------------------------------------------------------------------
 # BigQuery
 # ---------------------------------------------------------------------------
-def _normalize_private_key(raw):
-    """복사/붙여넣기 과정에서 흔히 깨지는 패턴들을 방어적으로 복구한다:
-    앞뒤 따옴표, \\r\\n, 실제 \\n 이스케이프 등."""
-    key = raw.strip()
-    if len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
-        key = key[1:-1]
-    key = key.replace("\\r\\n", "\n").replace("\\n", "\n")
-    key = key.replace("\r\n", "\n").replace("\r", "\n")
-    return key.strip() + "\n"
-
-
-def get_bq_client():
-    sa_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
-    if sa_json:
-        # 권장 경로: 서비스 계정 JSON 키 파일 전체를 하나의 시크릿으로 사용.
-        # JSON 파싱기가 내부의 \n 이스케이프를 알아서 실제 개행으로 풀어주므로
-        # private_key의 개행이 깨질 여지가 없다.
-        info = json.loads(sa_json)
-    else:
-        # 구버전 호환: client_email/private_key를 따로 받는 경로 (문제 재발 시 대비).
-        client_email = os.environ["BQ_SERVICE_ACCOUNT"]
-        private_key = _normalize_private_key(os.environ["BQ_PRIVATE_KEY"])
-        info = {
-            "type": "service_account",
-            "project_id": PROJECT_ID,
-            "private_key": private_key,
-            "client_email": client_email,
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }
-
-    try:
-        creds = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/bigquery"]
-        )
-    except ValueError as e:
-        # PEM 파싱 실패 시 어느 시크릿이 문제인지 바로 알 수 있도록, 값 자체는
-        # 절대 로그에 남기지 않고 형태(길이/개행 유무)만 남긴다.
-        pk = info.get("private_key", "")
-        log.error(
-            "서비스 계정 인증 정보 파싱 실패 (len=%d, has_newline=%s, starts_ok=%s, ends_ok=%s): %s",
-            len(pk), "\n" in pk,
-            pk.startswith("-----BEGIN"), pk.rstrip().endswith("-----"),
-            e,
-        )
-        raise
-    return bigquery.Client(project=PROJECT_ID, credentials=creds)
-
-
 def load_state(bq):
     """x_crawl_state 테이블에서 현재 워터마크를 읽어온다. (단일 소스)"""
     rows = bq.query(f"SELECT x_handle, last_tweet_id, x_user_id FROM `{STATE_TABLE}`").result()
