@@ -2,8 +2,8 @@ name: X Crawler Daily
 
 on:
   schedule:
-    # 매일 23:00 UTC = 08:00 KST
-    - cron: '0 23 * * *'
+    # 매일 21:00 UTC = 06:00 KST
+    - cron: '0 21 * * *'
   workflow_dispatch: {}
 
 jobs:
