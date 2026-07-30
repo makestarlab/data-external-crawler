@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       curation_model:
-        description: '큐레이션 모델 override (비워두면 기본값=Haiku 4.5). 예: claude-sonnet-5'
+        description: '큐레이션 모델 override (비워두면 기본값=Sonnet 5). 예: claude-haiku-4-5-20251001'
         required: false
         default: ''
 
@@ -35,11 +35,11 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-          # 기본은 Claude Haiku 4.5 (claude-haiku-4-5-20251001, curate_events.py 기본값과 동일).
-          # ax팀 피드백: 요약/가공 품질이 부족하면 상위 모델로 바꿔보라는 의견 -> 코드 수정 없이
-          # Actions 탭 > "Run workflow" > curation_model 입력창에 'claude-sonnet-5' 등을 넣어
-          # 바로 비교 테스트할 수 있다.
-          CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-haiku-4-5-20251001' }}
+          # 기본은 Claude Sonnet 5 (curate_events.py 기본값과 동일). Haiku 4.5 대비 실제 데이터로
+          # 비교 테스트한 결과 관련성 판단/추출 정확도가 유의미하게 나아서 기본값으로 승격함
+          # (2026-07-30, README 참고). 다시 haiku로 비교하고 싶으면 Actions 탭 > "Run workflow" >
+          # curation_model 입력창에 'claude-haiku-4-5-20251001'을 넣으면 된다.
+          CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
         run: python curate_events.py
 
       - name: Upload run summary

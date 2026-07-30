@@ -25,7 +25,7 @@
   {"x_handle": "OFFICIAL_MEOVV", "entity_id": "meovv", "entity_type": "ARTIST"},
   {"x_handle": "P1H_official", "entity_id": "p1harmony", "entity_type": "ARTIST"},
   {"x_handle": "RIIZE_official", "entity_id": "riize", "entity_type": "ARTIST"},
-  {"x_handle": "RVsmtown", "entity_id": "redvelvet_irene", "entity_type": "ARTIST"},
+  {"x_handle": "RVsmtown", "entity_id": "redvelvet", "entity_type": "ARTIST"},
   {"x_handle": "SHINee", "entity_id": "shinee", "entity_type": "ARTIST"},
   {"x_handle": "SJofficial", "entity_id": "super_junior", "entity_type": "ARTIST"},
   {"x_handle": "Stray_Kids", "entity_id": "stray_kids", "entity_type": "ARTIST"},

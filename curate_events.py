@@ -40,7 +40,7 @@ RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 CURATED_TABLE = f"{PROJECT_ID}.{DATASET}.x_event_announcements"
 ENTITY_TABLE = f"{PROJECT_ID}.{DATASET}.entity_master"
 
-MODEL = os.environ.get("CURATION_MODEL", "claude-haiku-4-5-20251001")
+MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
 RECENT_WINDOW_DAYS = 21   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
 MAX_TWEETS_PER_CALL = 40  # 계정당 한 배치의 최대 트윗 수 (통상 하루 0~10건이라 넉넉함)
 

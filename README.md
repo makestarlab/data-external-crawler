@@ -73,12 +73,22 @@ gh secret set ANTHROPIC_API_KEY --repo makestarlab/data-external-crawler
 구버전 호환용으로 `BQ_SERVICE_ACCOUNT`(client_email) + `BQ_PRIVATE_KEY`(PEM) 두 시크릿을
 따로 넣는 경로도 코드에 남아있지만, 위 문제 때문에 권장하지 않는다.
 
-`curate_events.py`의 모델은 기본값 `claude-haiku-4-5-20251001`(Claude Haiku 4.5)이다.
-ax팀 피드백: 게시글 요약/가공 용도라 haiku로는 품질이 부족할 수 있으니 일단 haiku로 시작하고,
-결과가 안 좋으면 상위 모델(Sonnet 이상)로 바꿔보라는 의견을 받았다. 코드 수정 없이 바로
-비교 테스트하려면 GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서
-`curation_model` 입력값에 `claude-sonnet-5` 등을 넣고 수동 실행하면 된다(비워두면 기본값 사용).
-계속 상위 모델을 쓰기로 결정했다면 workflow yaml의 `CURATION_MODEL` 기본값을 바꿔서 고정하면 된다.
+`curate_events.py`의 모델은 기본값 `claude-sonnet-5`(Claude Sonnet 5)이다.
+
+**모델 선택 경위 (2026-07-30)**: ax팀 피드백대로 처음엔 Haiku 4.5로 시작했다가, 실제
+백로그(raw 396건)를 Haiku 4.5와 Sonnet 5 양쪽으로 큐레이션해서 `extraction_model` 컬럼
+기준으로 비교했다.
+- 관련성 판단 정확도: Haiku가 confidence 1.0으로 자신 있게 "관련 없음" 처리한 사례 중
+  실제로는 프리오더/재입고 공지인 게 여러 건 발견됨 (Sonnet은 정확히 잡아냄). 반대로
+  Sonnet이 놓친 건 대부분 애매한 회고성 콘텐츠라 명백한 오답은 아니었음.
+- 아티스트/판매처 엔티티 인식률: 두 모델 다 비슷한 수준 (미해결 건은 대부분 `entity_master`
+  로스터 커버리지 부족 때문이지 모델 차이가 아니었음).
+- 비용: Sonnet 5가 Haiku 4.5보다 2~3배 비싸지만, 이 파이프라인 물량(하루 30~50콜, 짧은
+  프롬프트)에서는 월 몇 달러 수준 차이라 무시 가능.
+
+위 근거로 기본값을 Sonnet 5로 승격했다. 다시 Haiku로 비교하고 싶으면 코드 수정 없이
+GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서 `curation_model`
+입력값에 `claude-haiku-4-5-20251001`을 넣고 수동 실행하면 된다(비워두면 기본값 Sonnet 5 사용).
 
 ## 스케줄
 
@@ -93,3 +103,12 @@ ax팀 피드백: 게시글 요약/가공 용도라 haiku로는 품질이 부족�
   버전에서는 서로 다른 그룹으로 잡힌다 (계정 간 교차 그룹핑은 후속 과제).
 - LLM 추출 결과의 품질(특히 앨범명/이벤트명 정확도)은 실제 데이터로 검증이 더 필요하다.
   `extraction_note`/`confidence` 필드로 감사하면서 프롬프트를 다듬어갈 것.
+- `entity_master` 로스터가 아직 작아서(81건 -> 이번에 신규 추가분 포함해도 여전히 부족),
+  SELLER 계정이 언급하는 아티스트 중 상당수가 `artist_entity_id`로 못 이어진다. 실제로
+  Haiku/Sonnet 비교 테스트에서 관련 있음으로 판단된 SELLER 공지의 약 2/3이 이 케이스였다
+  (ONF, N.Flying, WONHO, Young K 등 다수). 모델을 바꿔도 해결 안 되는, 순수 데이터
+  커버리지 문제라 로스터를 넓히는 게 우선순위 높은 후속 작업.
+- `RVsmtown`(Red Velvet) 계정이 그룹이 아니라 멤버 개인(`redvelvet_irene`)으로만 매핑돼
+  있던 걸 2026-07-30에 그룹 엔티티(`redvelvet`)를 신규 추가해서 바로잡았다. 비슷하게
+  "그룹 공식 계정인데 멤버 개인 엔티티만 등록돼 있는" 케이스가 다른 아티스트에도 있을 수
+  있으니 점검이 필요하다.
