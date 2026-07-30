@@ -94,6 +94,27 @@ GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서 `curati
 
 매일 21:00 UTC (06:00 KST) 실행. `workflow_dispatch`로 수동 실행도 가능.
 
+## 과거 데이터 백필 (일회성, 2026-07-30 추가)
+
+정규 일일 크롤링(`X Crawler Daily`)은 2026-07-29부터 시작됐다. 그 이전 기간의 경쟁사
+이벤트 공지를 소급 수집하기 위해 `x_crawler_backfill.py` + `X Crawler Backfill (one-off)`
+워크플로를 추가했다.
+
+- **스케줄 없음** - Actions 탭 > **X Crawler Backfill (one-off)** > **Run workflow**에서
+  수동으로만 실행한다.
+- 입력값: `start_date`(기본 2026-07-01), `max_pages`(계정당 최대 페이지 수, 기본 20 =
+  최대 2000건), `curation_model`(기본 Sonnet 5).
+- 정규 크롤러와의 차이:
+  - `since_id` 워터마크를 무시하고 항상 `start_date`부터 조회하며, **`x_crawl_state`는
+    갱신하지 않는다** (정규 크롤러의 워터마크를 과거로 되돌리지 않기 위함).
+  - `x_posts_raw`에 이미 있는 tweet_id는 걸러내고 신규 행만 적재해서, 정규 크롤링 기간과
+    겹쳐도 중복 적재되지 않는다.
+  - 백필이 끝나면 같은 워크플로 안에서 바로 `curate_events.py`까지 실행해서 큐레이션까지
+    한 번에 끝낸다.
+- **제약**: X API `GET /2/users/:id/tweets`는 계정당 최근 3200건까지만 반환하므로, 한 달치
+  백필에는 20페이지(2000건)면 충분하지만 트윗이 매우 많은 판매처 계정은 이론상 그 이전
+  데이터를 API로 아예 가져올 수 없을 수 있다.
+
 ## 알려진 제약 / 후속 과제
 
 - `x_crawl_targets.json`은 entity_master의 스냅샷이라 계정이 추가/제외되면 수동으로

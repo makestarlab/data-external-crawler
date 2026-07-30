@@ -155,13 +155,14 @@ def batch_lookup_users(usernames):
     return result
 
 
-def get_tweets(user_id, since_id=None, start_time=None):
-    """since_id(있으면 우선) 또는 start_time 기준, 최대 MAX_PAGES_PER_ACCOUNT 페이지 수집.
+def get_tweets(user_id, since_id=None, start_time=None, max_pages=MAX_PAGES_PER_ACCOUNT):
+    """since_id(있으면 우선) 또는 start_time 기준, 최대 max_pages 페이지 수집
+    (기본값은 일일 크롤링용 MAX_PAGES_PER_ACCOUNT=3. 백필 스크립트는 더 큰 값을 넘겨서 씀).
     expansions는 의도적으로 생략 (인용/RT 원본 Post-read 과금 방지, BQ 조인으로 대체).
     """
     tweets = []
     pagination_token = None
-    for _ in range(MAX_PAGES_PER_ACCOUNT):
+    for _ in range(max_pages):
         params = {
             "max_results": 100,
             "tweet.fields": "created_at,public_metrics,referenced_tweets,entities",

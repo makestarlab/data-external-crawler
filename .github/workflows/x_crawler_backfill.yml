@@ -1,0 +1,58 @@
+name: X Crawler Backfill (one-off)
+
+# 이 워크플로는 스케줄이 없다 - Actions 탭에서 수동(workflow_dispatch)으로만 실행한다.
+# 2026-07-29부터 시작된 정규 일일 크롤링(X Crawler Daily) 이전 기간의 과거 포스팅을
+# 한 번 소급 수집(x_crawler_backfill.py)하고, 이어서 큐레이션(curate_events.py)까지
+# 한 번에 처리한다.
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: '백필 시작일 (YYYY-MM-DD). 비워두면 2026-07-01부터.'
+        required: false
+        default: ''
+      max_pages:
+        description: '계정당 최대 페이지 수 (100건/페이지). 비워두면 20페이지(=최대 2000건).'
+        required: false
+        default: ''
+      curation_model:
+        description: '백필된 데이터를 큐레이션할 모델 override. 비워두면 기본값 Sonnet 5.'
+        required: false
+        default: ''
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Backfill historical posts (raw -> x_posts_raw)
+        env:
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          BACKFILL_START_DATE: ${{ github.event.inputs.start_date || '2026-07-01' }}
+          BACKFILL_MAX_PAGES: ${{ github.event.inputs.max_pages || '20' }}
+        run: python x_crawler_backfill.py
+
+      - name: Curate backfilled events (raw -> x_event_announcements)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
+        run: python curate_events.py
+
+      - name: Upload run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backfill-summary-${{ github.run_id }}
+          path: run_summary_backfill_*.csv
+          if-no-files-found: ignore
