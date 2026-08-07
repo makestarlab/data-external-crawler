@@ -97,23 +97,38 @@ is_relevant=false로 표시하고 나머지 필드는 null로 둡니다."""
 
 def load_entity_lookup(bq):
     """entity_master 전체를 읽어 (1) 이름->entity_id 역색인, (2) entity_id->표시명,
-    (3) SELLER용 아티스트 로스터 텍스트를 만든다."""
+    (3) SELLER용 아티스트 로스터 텍스트를 만든다.
+
+    [2026-08-07] 역색인에 x_handle도 넣는다.
+      LLM이 뽑는 seller_name은 자유 텍스트라 실제로는 X 핸들 그대로 나오는 경우가 매우 많다
+      (예: 'JumpUp_ent', 'soundwave_korea', 'EVERLINESHOP', 'MINIRECORD_SHOP', 'applemusic_m').
+      name/name_en 정확 일치만 보던 탓에 판매처 매칭률이 25~35%에 그쳤다. 핸들을 색인에
+      추가하면 이 형태가 그대로 잡힌다. 이름/영문명이 우선이고 핸들은 비어 있을 때만 채운다
+      (핸들이 다른 엔티티의 정식 명칭과 충돌하는 경우 정식 명칭 쪽을 이기지 않도록)."""
     rows = list(bq.query(f"""
-        SELECT entity_id, entity_type, name, name_en
+        SELECT entity_id, entity_type, name, name_en, x_handle
         FROM `{ENTITY_TABLE}`
     """).result())
 
     name_to_id = {}
     id_to_name = {}
     artist_roster_lines = []
+    handle_keys = []
     for r in rows:
         for n in (r["name"], r["name_en"]):
             if n:
                 name_to_id[n.strip().lower()] = (r["entity_id"], r["entity_type"])
+        if r["x_handle"]:
+            handle_keys.append((r["x_handle"].strip().lower(), (r["entity_id"], r["entity_type"])))
         id_to_name[r["entity_id"]] = r["name"]
         if r["entity_type"] == "ARTIST":
             label = r["name"] if not r["name_en"] else f'{r["name"]} ({r["name_en"]})'
             artist_roster_lines.append(label)
+
+    # 핸들은 정식 명칭이 선점하지 않은 키에만 채운다.
+    for key, val in handle_keys:
+        name_to_id.setdefault(key, val)
+
     return name_to_id, id_to_name, "\n".join(sorted(set(artist_roster_lines)))
 
 
@@ -251,6 +266,21 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
 
         artist_entity_id = resolve_entity_id(res.get("artist_name"), name_to_id, "ARTIST")
         seller_entity_id = resolve_entity_id(res.get("seller_name"), name_to_id, "SELLER")
+
+        # [2026-08-07] SELLER 계정이 자기 계정에 올린 공지면 판매처는 그 계정 자신이다.
+        #   seller_name은 LLM이 본문에서 읽어낸 자유 텍스트라 표기 흔들림이 심한데
+        #   (핸들 그대로, 지점명 붙임('비트로드 홍대점'), 대소문자/띄어쓰기 변형 등),
+        #   raw 행에는 어느 계정에서 수집했는지가 entity_id로 이미 정확히 들어있다.
+        #   이름 매칭이 먼저 성공하면 그걸 존중하고(판매처가 타 판매처를 언급하는 경우 대비),
+        #   실패했을 때만 계정 자신으로 폴백한다.
+        #
+        #   [한계] 판매처가 entity_master에 없는 제3자 판매처를 언급한 경우는 이 폴백이
+        #   틀린다(예: @MINIRECORD_SHOP이 올린 seller_name='OLIVEYOUNG' 공지가 minirecord로
+        #   잡힘). 2026-08-07 기준 전체 677건 중 6건(0.9%) 수준이고, 폴백 없이는 52%가
+        #   NULL로 비는 것과 비교하면 감수할 만하다. 원문 seller_name은 그대로 보존되므로
+        #   나중에 감사·보정이 가능하다.
+        if seller_entity_id is None and raw["entity_type"] == "SELLER":
+            seller_entity_id = raw["entity_id"]
 
         rows.append({
             "event_group_id": group_id,
