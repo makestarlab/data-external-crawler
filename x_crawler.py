@@ -70,9 +70,17 @@ def load_rows_to_bq(bq, rows):
 
 
 def update_state(bq, updates):
-    """updates 각 원소: x_handle, x_user_id, last_tweet_id, last_crawled_at,
-    last_run_tweet_count, last_run_status, last_run_note
+    """updates 각 원소: x_handle, entity_id, entity_type, x_user_id, last_tweet_id,
+    last_crawled_at, last_run_tweet_count, last_run_status, last_run_note
     -> MERGE로 x_crawl_state 갱신 (파라미터 바인딩, SQL 텍스트 조립 없음)
+
+    [2026-08-07] WHEN NOT MATCHED THEN INSERT 절 추가.
+      이전에는 MATCHED(UPDATE)만 있어서 x_crawl_targets.json에 새로 추가한 계정의 state
+      행이 영영 생성되지 않았다. 그러면 since_id 워터마크가 없는 상태가 계속돼 매 실행마다
+      FIRST_RUN_LOOKBACK_DAYS(1일)치를 다시 긁어오고, 일일 크롤러는 백필과 달리 중복
+      tweet_id를 걸러내지 않으므로(load_rows_to_bq는 WRITE_APPEND) x_posts_raw에 같은
+      트윗이 계속 쌓이고 큐레이션 비용도 중복으로 나간다.
+      실제로 2026-08-07 판매처 22개 추가 후 이 증상이 확인돼 수정했다.
     """
     if not updates:
         return
@@ -81,6 +89,8 @@ def update_state(bq, updates):
     USING UNNEST(@updates) S
     ON T.x_handle = S.x_handle
     WHEN MATCHED THEN UPDATE SET
+      T.entity_id = COALESCE(S.entity_id, T.entity_id),
+      T.entity_type = COALESCE(S.entity_type, T.entity_type),
       T.x_user_id = S.x_user_id,
       T.last_tweet_id = COALESCE(S.last_tweet_id, T.last_tweet_id),
       T.last_crawled_at = S.last_crawled_at,
@@ -88,6 +98,13 @@ def update_state(bq, updates):
       T.last_run_status = S.last_run_status,
       T.last_run_note = S.last_run_note,
       T.updated_at = CURRENT_TIMESTAMP()
+    WHEN NOT MATCHED THEN INSERT (
+      x_handle, entity_id, entity_type, x_user_id, last_tweet_id, last_crawled_at,
+      last_run_tweet_count, last_run_status, last_run_note, updated_at
+    ) VALUES (
+      S.x_handle, S.entity_id, S.entity_type, S.x_user_id, S.last_tweet_id, S.last_crawled_at,
+      S.last_run_tweet_count, S.last_run_status, S.last_run_note, CURRENT_TIMESTAMP()
+    )
     """
     struct_params = []
     for u in updates:
@@ -95,6 +112,8 @@ def update_state(bq, updates):
             bigquery.StructQueryParameter(
                 None,
                 bigquery.ScalarQueryParameter("x_handle", "STRING", u["x_handle"]),
+                bigquery.ScalarQueryParameter("entity_id", "STRING", u.get("entity_id")),
+                bigquery.ScalarQueryParameter("entity_type", "STRING", u.get("entity_type")),
                 bigquery.ScalarQueryParameter("x_user_id", "STRING", u.get("x_user_id")),
                 bigquery.ScalarQueryParameter("last_tweet_id", "STRING", u.get("last_tweet_id")),
                 bigquery.ScalarQueryParameter("last_crawled_at", "TIMESTAMP", u["last_crawled_at"]),
@@ -246,7 +265,8 @@ def main():
 
             if not u:
                 state_updates.append({
-                    "x_handle": handle, "x_user_id": None, "last_tweet_id": None,
+                    "x_handle": handle, "entity_id": target.get("entity_id"),
+                    "entity_type": target.get("entity_type"), "x_user_id": None, "last_tweet_id": None,
                     "last_crawled_at": collected_at, "last_run_tweet_count": 0,
                     "last_run_status": "USER_LOOKUP_FAILED", "last_run_note": None,
                 })
@@ -263,7 +283,8 @@ def main():
             except Exception as e:
                 log.exception("크롤링 실패: %s", handle)
                 state_updates.append({
-                    "x_handle": handle, "x_user_id": user_id, "last_tweet_id": since_id,
+                    "x_handle": handle, "entity_id": target.get("entity_id"),
+                    "entity_type": target.get("entity_type"), "x_user_id": user_id, "last_tweet_id": since_id,
                     "last_crawled_at": collected_at, "last_run_tweet_count": 0,
                     "last_run_status": "ERROR", "last_run_note": str(e)[:500],
                 })
@@ -276,7 +297,8 @@ def main():
 
             new_last_id = max((t["id"] for t in tweets), key=int) if tweets else since_id
             state_updates.append({
-                "x_handle": handle, "x_user_id": user_id, "last_tweet_id": new_last_id,
+                "x_handle": handle, "entity_id": target.get("entity_id"),
+                "entity_type": target.get("entity_type"), "x_user_id": user_id, "last_tweet_id": new_last_id,
                 "last_crawled_at": collected_at, "last_run_tweet_count": len(tweets),
                 "last_run_status": "SUCCESS", "last_run_note": None,
             })
