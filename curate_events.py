@@ -95,39 +95,73 @@ null로 두고 confidence를 낮게 주세요. 광고/공지가 아닌 일반 �
 is_relevant=false로 표시하고 나머지 필드는 null로 둡니다."""
 
 
+def _entity_master_has_aliases(bq):
+    """entity_master에 aliases 컬럼이 있는지 확인. 컬럼 추가(DDL)와 코드 배포 순서가
+    어긋나도 크롤링이 죽지 않도록 방어적으로 조회한다."""
+    rows = list(bq.query(f"""
+        SELECT COUNT(*) AS c
+        FROM `{PROJECT_ID}.{DATASET}.INFORMATION_SCHEMA.COLUMNS`
+        WHERE table_name = 'entity_master' AND column_name = 'aliases'
+    """).result())
+    return rows and rows[0]["c"] > 0
+
+
 def load_entity_lookup(bq):
     """entity_master 전체를 읽어 (1) 이름->entity_id 역색인, (2) entity_id->표시명,
     (3) SELLER용 아티스트 로스터 텍스트를 만든다.
 
-    [2026-08-07] 역색인에 x_handle도 넣는다.
-      LLM이 뽑는 seller_name은 자유 텍스트라 실제로는 X 핸들 그대로 나오는 경우가 매우 많다
-      (예: 'JumpUp_ent', 'soundwave_korea', 'EVERLINESHOP', 'MINIRECORD_SHOP', 'applemusic_m').
-      name/name_en 정확 일치만 보던 탓에 판매처 매칭률이 25~35%에 그쳤다. 핸들을 색인에
-      추가하면 이 형태가 그대로 잡힌다. 이름/영문명이 우선이고 핸들은 비어 있을 때만 채운다
-      (핸들이 다른 엔티티의 정식 명칭과 충돌하는 경우 정식 명칭 쪽을 이기지 않도록)."""
+    역색인 키는 우선순위 순으로 4단계다. 뒤로 갈수록 약한 근거라 앞 단계가 이미 선점한
+    키는 덮어쓰지 않는다(setdefault).
+      1) name / name_en          - 정식 명칭
+      2) 괄호 벗긴 정식 명칭      - entity_master에는 설명을 괄호로 덧붙인 이름이 있다
+                                   (예: '애플뮤직(국내 K-pop 판매몰)', 'Apple Music (applemusic.co.kr)').
+                                   LLM은 당연히 '애플뮤직'/'Apple Music'으로만 뽑으므로
+                                   괄호 형태를 색인하지 않으면 조용히 전부 NULL이 된다.
+      3) aliases                 - 수동 등록한 표기 변형 ('SMTOWN', 'Weverse', 'FANS' 등)
+      4) x_handle                - LLM이 seller_name을 핸들 그대로 뱉는 경우가 많다
+                                   ('JumpUp_ent', 'soundwave_korea', 'MINIRECORD_SHOP')
+
+    aliases 컬럼이 아직 없는 환경에서도 동작한다(있으면 쓰고 없으면 건너뛴다).
+    """
+    has_aliases = _entity_master_has_aliases(bq)
+    alias_col = "aliases" if has_aliases else "CAST(NULL AS ARRAY<STRING>) AS aliases"
     rows = list(bq.query(f"""
-        SELECT entity_id, entity_type, name, name_en, x_handle
+        SELECT entity_id, entity_type, name, name_en, x_handle, {alias_col}
         FROM `{ENTITY_TABLE}`
     """).result())
 
     name_to_id = {}
     id_to_name = {}
     artist_roster_lines = []
+    paren_keys = []
+    alias_keys = []
     handle_keys = []
+
     for r in rows:
+        val = (r["entity_id"], r["entity_type"])
         for n in (r["name"], r["name_en"]):
-            if n:
-                name_to_id[n.strip().lower()] = (r["entity_id"], r["entity_type"])
+            if not n:
+                continue
+            name_to_id[n.strip().lower()] = val
+            m = _PAREN_RE.match(n.strip())
+            if m:
+                for part in (m.group(1), m.group(2)):
+                    if part and part.strip():
+                        paren_keys.append((part.strip().lower(), val))
+        for a in (r["aliases"] or []):
+            if a and a.strip():
+                alias_keys.append((a.strip().lower(), val))
         if r["x_handle"]:
-            handle_keys.append((r["x_handle"].strip().lower(), (r["entity_id"], r["entity_type"])))
+            handle_keys.append((r["x_handle"].strip().lower(), val))
+
         id_to_name[r["entity_id"]] = r["name"]
         if r["entity_type"] == "ARTIST":
             label = r["name"] if not r["name_en"] else f'{r["name"]} ({r["name_en"]})'
             artist_roster_lines.append(label)
 
-    # 핸들은 정식 명칭이 선점하지 않은 키에만 채운다.
-    for key, val in handle_keys:
-        name_to_id.setdefault(key, val)
+    for keys in (paren_keys, alias_keys, handle_keys):
+        for key, val in keys:
+            name_to_id.setdefault(key, val)
 
     return name_to_id, id_to_name, "\n".join(sorted(set(artist_roster_lines)))
 
