@@ -45,6 +45,116 @@ MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
 RECENT_WINDOW_DAYS = 21   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
 MAX_TWEETS_PER_CALL = 40  # 계정당 한 배치의 최대 트윗 수 (통상 하루 0~10건이라 넉넉함)
 
+# =============================================================================
+# [2026-08-10] 비판매 게시물 필터 (도메인 기반)
+# =============================================================================
+# 배경: '판매처 미상'(seller_name IS NULL)으로 남는 게시물 344건을 링크 도메인별로
+#   조사해보니, 실제 판매글은 거의 없고 대부분 음원 발매 공지 / 음악방송·시상식 투표
+#   안내 / 팬커뮤니티(위버스·베리즈·팬더원) 공지 / 콘서트 티켓·라이브뷰잉 공지였다.
+#   LLM이 "이벤트성 공지"를 넓게 is_relevant=TRUE로 잡는 탓인데, 이런 건들이
+#   대시보드의 "타 판매처 대응" 목록을 오염시킨다.
+#
+# 적용 범위: 판매처가 끝내 특정되지 않은 게시물(seller_name이 비어 "판매처 미상"으로
+#   묶이는 건)만 대상. 판매처가 붙은 게시물은 그 자체로 유효한 신호라 손대지 않는다.
+#
+# 판정 규칙 — 아래 둘 중 하나면 is_relevant=False:
+#   (1) 외부 링크가 하나도 없음
+#   (2) 링크는 있는데 (a) 전부 NON_SALES_DOMAIN_RE에 걸리고
+#       (b) 구매 경로(/shop, /product, /goods ...) 링크가 하나도 없고
+#       (c) 본문에 판매/굿즈 신호 키워드(SALES_KEEP_RE)가 전혀 없음
+#
+#   (2)는 세 조건을 모두 요구하므로, 위버스 공지라도 본문에 '럭키드로우'/'특전'/
+#   '팬사인회'가 있으면 살아남는다(실제로 위버스 공지 중 판매성 건들이 여기 해당).
+#
+#   [2026-08-10 사용자 확정] (1)은 원래 "판단 근거가 없으니 유지"였는데, 링크 없는 건
+#   104건(대표 기준)이 대부분 투표 안내 / 방송 참여·인원체크 / 당첨자 발표 /
+#   트랙리스트·컨셉포토 공개라 전부 제외하기로 했다. 실제 판매글도 일부 섞여 있다는 걸
+#   알고 내린 결정이다 — 링크 없이 이미지로만 안내한 건들(RT @SKZ_THISANDTHAT 팝업
+#   MERCH SALES, RT @mnetplusmerch KCON MD, RT @magazineTheStar 더스타 팬사인회 등).
+#   RT 원본 핸들(`RT @xxx:`)을 entity_master.x_handle로 역매핑해 판매처를 붙이면
+#   이 손실분 중 상당수를 되살릴 수 있다(미구현).
+#
+# 주의: 판매처 도메인(yes24, aladin, ktown4u, weverseshop 등)은 절대 넣지 말 것.
+#   weverse.io(팬커뮤니티)와 weverseshop.io(판매처)는 다른 도메인이다.
+#
+# 아티스트/소속사 자체몰(ateez.kqent.com/shop, xikers.kr/shop, nouera-official.com/shop 등)은
+#   여기 넣지 않는다. 2026-08-10 사용자 확정: 자체몰은 "타 판매처"가 아니므로 entity_master에
+#   판매처로 등록하지 않지만, 실제 상품 판매 공지일 수 있어 is_relevant까지 떨어뜨리진 않는다.
+#   결과적으로 seller_name은 계속 비어(=판매처 미상) 남는다 — 의도된 동작이다.
+NON_SALES_DOMAIN_RE = re.compile(
+    r"("
+    # 음원/스트리밍
+    r"\.lnk\.to$|^lnk\.to$|^(m2?\.)?melon\.com$|^genie\.co\.kr$|^m?\.?music-flo\.com$"
+    r"|^music\.bugs\.co\.kr$|^vibe\.naver\.com$|^open\.spotify\.com$|^music\.youtube\.com$"
+    r"|^orcd\.co$|^stationhead\.com$"
+    # SNS/미디어/앱스토어
+    r"|^youtube\.com$|^youtu\.be$|^(vt\.)?tiktok\.com$|^instagram\.com$|(^|\.)pinterest\.com$"
+    r"|^m?\.?entertain\.naver\.com$|^news\.naver\.com$|^x\.com$|^twitter\.com$|^facebook\.com$"
+    r"|^threads\.(com|net)$|^docs\.google\.com$|^play\.google\.com$|^apps\.apple\.com$|^linktr\.ee$"
+    # 팬커뮤니티/투표앱 (판매처 아님 — 공지 채널)
+    r"|(^|\.)weverse\.io$|(^|\.)berriz\.in$|^app\.fans$|^link\.fans$|(^|\.)mnetplus\.world$"
+    r"|^mnetplus\.onelink\.me$|(^|\.)fanca\.io$|^fantheone\.com$|(^|\.)idolchamp\.com$"
+    r"|(^|\.)linc\.fan$|^pypd\.app$|(^|\.)flybook\.kr$|(^|\.)dayoff\.at$"
+    # 티켓/공연
+    r"|^ticketmaster\.com$|^a-nation\.net$|^api-liveviewing\.com$|^hybejapan-concert\.com$"
+    r"|(^|\.)kcforum\.co\.kr$"
+    r")"
+)
+
+SHOP_PATH_RE = re.compile(r"/(shop|store|product|products|goods|order|cart|buy|item)(/|\?|$)", re.I)
+
+SALES_KEEP_RE = re.compile(
+    r"(판매|구매|예약|예판|선주문|pre-?order|응모|팬사인회|사인회|영상통화|영통"
+    r"|럭키\s*드로우|lucky\s*draw|럭드|특전|特典|\bmd\b|굿즈|merch|입고|당첨|추첨"
+    r"|pop-?up|팝업|special\s*gift|fan\s*sign|meet\s*[n&]\s*greet|밈앤그릿|video\s*call"
+    r"|\bkit\b|키트|아카이브북|archiving\s*book|photo\s*book|포토북|화보집"
+    r"|응원봉|light\s*stick|라이트스틱|이용권|sound\s*coin|시즌\s*그리팅|season.?s?\s*greeting"
+    r"|\bstore\b|스토어)",
+    re.I,
+)
+
+_TWEET_MEDIA_URL_RE = re.compile(r"^https?://(x|twitter)\.com/[^/]+/status/\d+/(photo|video)/", re.I)
+_HOST_RE = re.compile(r"^https?://([^/?#]+)", re.I)
+
+
+def extract_link_urls(*entities_jsons):
+    """entities_json(들)에서 외부 링크 URL을 뽑는다.
+
+    트윗 본문의 링크는 전부 t.co 단축 URL이라 도메인 판정에 쓸 수 없다. 원본 도메인은
+    entities.urls[].unwound_url(리다이렉트 최종 목적지) 또는 expanded_url에만 들어있다.
+    RT는 본문이 잘리므로 호출부에서 원본 트윗의 entities_json도 같이 넘긴다.
+    트윗 자체의 첨부 사진/영상 링크(x.com/.../photo/1)는 링크로 치지 않는다.
+    """
+    urls = []
+    for ej in entities_jsons:
+        if not ej:
+            continue
+        try:
+            data = json.loads(ej) if isinstance(ej, str) else ej
+        except (ValueError, TypeError):
+            continue
+        for u in (data or {}).get("urls") or []:
+            url = u.get("unwound_url") or u.get("expanded_url")
+            if url and not _TWEET_MEDIA_URL_RE.match(url):
+                urls.append(url)
+    return urls
+
+
+def looks_non_sales(urls, tweet_text):
+    """제외 대상이면 True."""
+    if not urls:
+        return True                       # 링크 없음 → 제외 (2026-08-10 사용자 확정)
+    if any(SHOP_PATH_RE.search(u) for u in urls):
+        return False                      # 구매 경로 링크가 하나라도 있으면 유지
+    for u in urls:
+        m = _HOST_RE.match(u)
+        host = re.sub(r"^www\.", "", m.group(1).lower()) if m else ""
+        if not NON_SALES_DOMAIN_RE.search(host):
+            return False                  # 판매처일 수 있는 도메인이 섞여 있으면 유지
+    if SALES_KEEP_RE.search(tweet_text or ""):
+        return False                      # 본문에 판매/굿즈 신호가 있으면 유지
+    return True
+
 TOOL_SCHEMA = {
     "name": "extract_event_announcements",
     "description": "각 트윗에 대해 굿즈/앨범/이벤트 판매 공지 여부와 구조화된 정보를 추출한다.",
@@ -191,11 +301,20 @@ def resolve_entity_id(name, name_to_id, expect_type=None):
 
 
 def fetch_uncurated_by_handle(bq):
+    # entities_json은 도메인 기반 비판매 필터(looks_non_sales)에서만 쓴다. RT는 본문이
+    # 잘려 링크가 사라지므로 referenced_tweet_id로 원본 트윗의 entities_json도 같이 가져온다
+    # (원본이 우리 수집 대상이 아니면 NULL — 그 경우 필터는 그냥 판단을 보류한다).
     rows = list(bq.query(f"""
-        SELECT tweet_id, x_handle, entity_id, entity_type, run_date, tweet_text, tweet_url, tweet_created_at
-        FROM `{RAW_TABLE}`
-        WHERE is_curated IS NOT TRUE
-        ORDER BY x_handle, tweet_created_at
+        SELECT r.tweet_id, r.x_handle, r.entity_id, r.entity_type, r.run_date,
+               r.tweet_text, r.tweet_url, r.tweet_created_at,
+               r.entities_json, ref.entities_json AS ref_entities_json
+        FROM `{RAW_TABLE}` r
+        LEFT JOIN (
+          SELECT tweet_id, ANY_VALUE(entities_json) AS entities_json
+          FROM `{RAW_TABLE}` GROUP BY tweet_id
+        ) ref ON ref.tweet_id = r.referenced_tweet_id
+        WHERE r.is_curated IS NOT TRUE
+        ORDER BY r.x_handle, r.tweet_created_at
     """).result())
     by_handle = defaultdict(list)
     for r in rows:
@@ -270,7 +389,7 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
     return []
 
 
-def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, name_to_id, extracted_at):
+def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, name_to_id, id_to_name, extracted_at):
     existing_keys = {e["event_key"]: e["event_group_id"] for e in recent_events if e["event_key"]}
     new_group_first_seen = {}  # event_key -> group_id (이번 배치에서 처음 만든 신규 그룹)
     rows = []
@@ -282,22 +401,7 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
             continue
 
         is_relevant = bool(res.get("is_relevant"))
-        event_key = res.get("event_key")
-        group_id = None
-        is_representative = False
-
-        if is_relevant and event_key:
-            if event_key in existing_keys:
-                group_id = existing_keys[event_key]
-                is_representative = False
-            elif event_key in new_group_first_seen:
-                group_id = new_group_first_seen[event_key]
-                is_representative = False
-            else:
-                group_id = make_group_id(x_handle, event_key)
-                new_group_first_seen[event_key] = group_id
-                is_representative = True
-
+        note = res.get("note")
         artist_entity_id = resolve_entity_id(res.get("artist_name"), name_to_id, "ARTIST")
         seller_entity_id = resolve_entity_id(res.get("seller_name"), name_to_id, "SELLER")
 
@@ -316,6 +420,46 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
         if seller_entity_id is None and raw["entity_type"] == "SELLER":
             seller_entity_id = raw["entity_id"]
 
+        # [2026-08-10] seller_entity_id는 위 폴백으로 채워지는데 seller_name은 LLM이 뱉은
+        #   원문 그대로라 NULL로 남는 경우가 있었다. 대시보드는 seller_name으로 판매처를
+        #   묶기 때문에, 판매처가 특정됐는데도 "판매처 미상"으로 표시되는 문제가 있었다
+        #   (2026-08-10 기준 14건: everlineshop, kqshop, musicart, fans_shop, weverseshop, applemusic).
+        #   entity_master의 정식 명칭으로 채운다.
+        seller_name = res.get("seller_name")
+        if not (seller_name or "").strip() and seller_entity_id:
+            seller_name = id_to_name.get(seller_entity_id)
+
+        # [2026-08-10] 판매처가 끝내 미상인 게시물에만 비판매 필터를 적용한다.
+        #   LLM이 "이벤트성 공지"를 넓게 잡아서 음원 발매 / 시상식·음악방송 투표 /
+        #   방송 참여·인원체크 / 콘서트 공지까지 is_relevant=TRUE로 들어오는데,
+        #   판매처까지 특정된 건은 그 자체로 유효한 신호이므로 건드리지 않는다.
+        if is_relevant and not (seller_name or "").strip():
+            _urls = extract_link_urls(raw.get("entities_json"), raw.get("ref_entities_json"))
+            if looks_non_sales(_urls, raw["tweet_text"]):
+                is_relevant = False
+                _hosts = sorted({re.sub(r"^www\.", "", _HOST_RE.match(u).group(1).lower())
+                                 for u in _urls if _HOST_RE.match(u)})
+                note = f"[비판매 필터 {','.join(_hosts) if _hosts else '링크없음'}] {note or '-'}"
+
+        # 그룹핑은 위 필터로 is_relevant가 확정된 뒤에 한다. 필터에 걸린 게시물이
+        # 먼저 대표(is_representative=TRUE) 자리를 차지해버리면, 같은 이벤트의 진짜
+        # 판매 공지가 대표 자리를 못 잡아 대시보드에서 통째로 사라진다.
+        event_key = res.get("event_key")
+        group_id = None
+        is_representative = False
+
+        if is_relevant and event_key:
+            if event_key in existing_keys:
+                group_id = existing_keys[event_key]
+                is_representative = False
+            elif event_key in new_group_first_seen:
+                group_id = new_group_first_seen[event_key]
+                is_representative = False
+            else:
+                group_id = make_group_id(x_handle, event_key)
+                new_group_first_seen[event_key] = group_id
+                is_representative = True
+
         rows.append({
             "event_group_id": group_id,
             "is_representative": is_representative,
@@ -328,13 +472,13 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
             "artist_name": res.get("artist_name"),
             "artist_entity_id": artist_entity_id,
             "album_or_title": res.get("album_or_title"),
-            "seller_name": res.get("seller_name"),
+            "seller_name": seller_name,
             "seller_entity_id": seller_entity_id,
             "event_name": res.get("event_name"),
             "event_key": event_key,
             "is_relevant": is_relevant,
             "confidence": res.get("confidence"),
-            "extraction_note": res.get("note"),
+            "extraction_note": note,
             "tweet_text": raw["tweet_text"],
             "tweet_url": raw["tweet_url"],
             "tweet_created_at": raw["tweet_created_at"].strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -418,7 +562,7 @@ def main():
             extracted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             raw_by_tweet_id = {t["tweet_id"]: t for t in tweets}
             rows = build_curated_rows(
-                x_handle, raw_by_tweet_id, all_extractions, recent_events, name_to_id, extracted_at
+                x_handle, raw_by_tweet_id, all_extractions, recent_events, name_to_id, id_to_name, extracted_at
             )
 
             load_curated_rows(bq, rows)
