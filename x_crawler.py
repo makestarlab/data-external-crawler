@@ -71,6 +71,7 @@ def load_rows_to_bq(bq, rows):
 
 def update_state(bq, updates):
     """updates 각 원소: x_handle, entity_id, entity_type, x_user_id, x_profile_image_url,
+    x_follower_count,
     last_tweet_id, last_crawled_at, last_run_tweet_count, last_run_status, last_run_note
     -> MERGE로 x_crawl_state 갱신 (파라미터 바인딩, SQL 텍스트 조립 없음)
 
@@ -93,6 +94,7 @@ def update_state(bq, updates):
       T.entity_type = COALESCE(S.entity_type, T.entity_type),
       T.x_user_id = S.x_user_id,
       T.x_profile_image_url = COALESCE(S.x_profile_image_url, T.x_profile_image_url),
+      T.x_follower_count = COALESCE(S.x_follower_count, T.x_follower_count),
       T.last_tweet_id = COALESCE(S.last_tweet_id, T.last_tweet_id),
       T.last_crawled_at = S.last_crawled_at,
       T.last_run_tweet_count = S.last_run_tweet_count,
@@ -100,10 +102,10 @@ def update_state(bq, updates):
       T.last_run_note = S.last_run_note,
       T.updated_at = CURRENT_TIMESTAMP()
     WHEN NOT MATCHED THEN INSERT (
-      x_handle, entity_id, entity_type, x_user_id, x_profile_image_url, last_tweet_id,
+      x_handle, entity_id, entity_type, x_user_id, x_profile_image_url, x_follower_count, last_tweet_id,
       last_crawled_at, last_run_tweet_count, last_run_status, last_run_note, updated_at
     ) VALUES (
-      S.x_handle, S.entity_id, S.entity_type, S.x_user_id, S.x_profile_image_url, S.last_tweet_id,
+      S.x_handle, S.entity_id, S.entity_type, S.x_user_id, S.x_profile_image_url, S.x_follower_count, S.last_tweet_id,
       S.last_crawled_at, S.last_run_tweet_count, S.last_run_status, S.last_run_note, CURRENT_TIMESTAMP()
     )
     """
@@ -117,6 +119,7 @@ def update_state(bq, updates):
                 bigquery.ScalarQueryParameter("entity_type", "STRING", u.get("entity_type")),
                 bigquery.ScalarQueryParameter("x_user_id", "STRING", u.get("x_user_id")),
                 bigquery.ScalarQueryParameter("x_profile_image_url", "STRING", u.get("x_profile_image_url")),
+                bigquery.ScalarQueryParameter("x_follower_count", "INT64", u.get("x_follower_count")),
                 bigquery.ScalarQueryParameter("last_tweet_id", "STRING", u.get("last_tweet_id")),
                 bigquery.ScalarQueryParameter("last_crawled_at", "TIMESTAMP", u["last_crawled_at"]),
                 bigquery.ScalarQueryParameter("last_run_tweet_count", "INT64", u["last_run_tweet_count"]),
@@ -273,7 +276,7 @@ def main():
                 state_updates.append({
                     "x_handle": handle, "entity_id": target.get("entity_id"),
                     "entity_type": target.get("entity_type"), "x_user_id": None,
-                    "x_profile_image_url": None, "last_tweet_id": None,
+                    "x_profile_image_url": None, "x_follower_count": None, "last_tweet_id": None,
                     "last_crawled_at": collected_at, "last_run_tweet_count": 0,
                     "last_run_status": "USER_LOOKUP_FAILED", "last_run_note": None,
                 })
@@ -284,6 +287,10 @@ def main():
             # _normal(48px) 대신 _200x200을 쓴다 — 대시보드에서 20px로 그리지만
             # 레티나/확대 대비. X가 URL 규칙을 바꾸면 그냥 원본 크기로 떨어질 뿐 깨지진 않는다.
             profile_img = (u.get("profile_image_url") or "").replace("_normal.", "_200x200.") or None
+            # 2026-08-11: 팔로워 수 — 판매처별 도달 효율(조회수 ÷ 팔로워) 분석용.
+            #   /2/users/by 에서 이미 public_metrics 를 받고 있어 추가 과금은 없다.
+            #   매 실행 덮어쓰므로 시계열이 아니라 "현재 시점 스냅샷"이다.
+            follower_cnt = (u.get("public_metrics") or {}).get("followers_count")
             prior = state.get(handle, {})
             since_id = prior.get("last_tweet_id")
             start_time = None if since_id else (now_utc - timedelta(days=FIRST_RUN_LOOKBACK_DAYS))
@@ -295,7 +302,8 @@ def main():
                 state_updates.append({
                     "x_handle": handle, "entity_id": target.get("entity_id"),
                     "entity_type": target.get("entity_type"), "x_user_id": user_id,
-                    "x_profile_image_url": profile_img, "last_tweet_id": since_id,
+                    "x_profile_image_url": profile_img, "x_follower_count": follower_cnt,
+                    "last_tweet_id": since_id,
                     "last_crawled_at": collected_at, "last_run_tweet_count": 0,
                     "last_run_status": "ERROR", "last_run_note": str(e)[:500],
                 })
@@ -310,7 +318,8 @@ def main():
             state_updates.append({
                 "x_handle": handle, "entity_id": target.get("entity_id"),
                 "entity_type": target.get("entity_type"), "x_user_id": user_id,
-                "x_profile_image_url": profile_img, "last_tweet_id": new_last_id,
+                "x_profile_image_url": profile_img, "x_follower_count": follower_cnt,
+                "last_tweet_id": new_last_id,
                 "last_crawled_at": collected_at, "last_run_tweet_count": len(tweets),
                 "last_run_status": "SUCCESS", "last_run_note": None,
             })

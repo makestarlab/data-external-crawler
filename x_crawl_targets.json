@@ -81,6 +81,8 @@
   {"x_handle": "Ktown4u_main", "entity_id": "ktown4u", "entity_type": "SELLER"},
   {"x_handle": "m2urecord", "entity_id": "m2urecord", "entity_type": "SELLER"},
   {"x_handle": "m_MUSICNDRAMA", "entity_id": "musicndrama", "entity_type": "SELLER"},
+  {"x_handle": "makestar_global", "entity_id": "makestar", "entity_type": "SELLER"},
+  {"x_handle": "Makestarcorp", "entity_id": "makestar", "entity_type": "SELLER"},
   {"x_handle": "MillionMusic_kr", "entity_id": "millionmusic", "entity_type": "SELLER"},
   {"x_handle": "MINIRECORD_SHOP", "entity_id": "minirecord", "entity_type": "SELLER"},
   {"x_handle": "mnetplusmerch", "entity_id": "mnetplusmerch", "entity_type": "SELLER"},
