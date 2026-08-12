@@ -1,0 +1,65 @@
+name: Curation Eval
+
+# 사람이 매긴 정답(makestar_ax.x_curation_labels) 대비 현재 프롬프트의 정확도를 잰다.
+# 스케줄 없음 - 판정 기준(prompts/classification_rules.md)을 고칠 때마다
+# Actions 탭에서 수동으로 돌려서 좋아졌는지 나빠졌는지를 숫자로 확인한다.
+on:
+  workflow_dispatch:
+    inputs:
+      stratum:
+        description: '특정 층만 평가. 비워두면 전체. (A_후처리로_제외 / B_통과_낮은확신 / C_통과_높은확신 / D_모델이_제외)'
+        required: false
+        default: ''
+      few_shot:
+        description: '판정별 few-shot 예시 개수. 0이면 주입 안 함(기준선 측정).'
+        required: false
+        default: '0'
+      curation_model:
+        description: '모델 override. 비워두면 프로덕션과 같은 Sonnet 5.'
+        required: false
+        default: ''
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run evaluation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.stratum }}" ]; then
+            ARGS="$ARGS --stratum ${{ github.event.inputs.stratum }}"
+          fi
+          if [ "${{ github.event.inputs.few_shot }}" != "0" ]; then
+            ARGS="$ARGS --few-shot ${{ github.event.inputs.few_shot }}"
+          fi
+          python evaluate_curation.py $ARGS --out eval_result.json | tee eval_summary.txt
+
+      - name: Show summary
+        if: always()
+        run: |
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat eval_summary.txt >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo '(요약 없음)' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ github.run_id }}
+          path: |
+            eval_result.json
+            eval_summary.txt

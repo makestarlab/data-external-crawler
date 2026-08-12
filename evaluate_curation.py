@@ -6,6 +6,13 @@ data-external-crawler/evaluate_curation.py
 사람이 매긴 정답(x_curation_labels) 대비 현재 프롬프트의 정확도를 잰다.
 프롬프트를 고칠 때마다 이걸 돌려서 좋아졌는지 나빠졌는지를 숫자로 확인한다.
 
+돌리는 곳:
+  GitHub Actions > "Curation Eval" > Run workflow  ← 권장. 시크릿이 이미 거기 있다.
+  로컬에서 돌리려면 아래가 먼저 필요하다.
+    pip install -r requirements.txt
+    export GCP_SERVICE_ACCOUNT_JSON='<서비스 계정 JSON 전체>'   # 없으면 gcloud ADC 로 대체
+    export ANTHROPIC_API_KEY='...'
+
 사용:
   python evaluate_curation.py                    # 전체 라벨로 평가
   python evaluate_curation.py --stratum B_통과_낮은확신
@@ -25,6 +32,7 @@ import anthropic
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from curate_events import build_system_prompt, TOOL_SCHEMA  # noqa: E402
+from bq_common import get_bq_client  # noqa: E402
 
 PROJECT = "makestar-dw"
 LOCATION = "asia-northeast3"
@@ -59,7 +67,13 @@ QUALIFY ROW_NUMBER() OVER (PARTITION BY verdict ORDER BY FARM_FINGERPRINT(tweet_
 
 
 def bq():
-    return bigquery.Client(project=PROJECT, location=LOCATION)
+    """파이프라인과 같은 인증 경로를 쓴다. 서비스 계정 시크릿이 없으면
+    로컬 gcloud 기본 인증(ADC)으로 넘어간다 — 손으로 돌려볼 때를 위한 길."""
+    try:
+        return get_bq_client()
+    except KeyError:
+        print("서비스 계정 시크릿이 없어 gcloud 기본 인증으로 붙습니다.", file=sys.stderr)
+        return bigquery.Client(project=PROJECT, location=LOCATION)
 
 
 def load_fewshot(client, n_per_class):
