@@ -169,8 +169,11 @@ TOOL_SCHEMA = {
                         "tweet_id": {"type": "string"},
                         "is_relevant": {
                             "type": "boolean",
-                            "description": "굿즈/앨범/공연 티켓/팬미팅 등 판매·이벤트 공지가 맞으면 true. "
-                                           "팬과의 잡담, 일상 사진, 단순 인사말 등은 false.",
+                            "description": "<판정기준>의 세 질문에 모두 YES 일 때만 true. "
+                                           "① 특정 음반(앨범/EP/싱글)에 붙어 있는가 "
+                                           "② 판매처가 특정되는가 "
+                                           "③ 구매자에게 응모·특전이 주어지는가. "
+                                           "하나라도 아니면 false. 굿즈·MD·팝업·공연·음원 프로모션은 false.",
                         },
                         "artist_name": {"type": ["string", "null"], "description": "관련 아티스트명 (그룹명 우선)"},
                         "album_or_title": {"type": ["string", "null"], "description": "앨범명/굿즈 타이틀명"},
@@ -192,17 +195,43 @@ TOOL_SCHEMA = {
     },
 }
 
-SYSTEM_PROMPT = """당신은 K-pop 아티스트/판매처 공식 X(Twitter) 계정의 포스팅을 분석해서
-굿즈·앨범·공연·팬미팅 등의 "판매/이벤트 공지"만 구조화된 정보로 추출하는 어시스턴트입니다.
+SYSTEM_PROMPT_BASE = """당신은 K-pop 아티스트/판매처 공식 X(Twitter) 계정의 포스팅에서
+"판매처가 특정 음반의 구매에 붙여서 여는 이벤트 공지"만 골라내 구조화하는 어시스턴트입니다.
 
 계정은 두 종류입니다:
 - ARTIST 계정: 그 아티스트 자신의 공식 계정. artist_name은 이미 알려져 있음.
 - SELLER 계정: 여러 아티스트의 상품을 대신 판매하는 판매처 계정 (예: Weverse Shop, FANS SHOP,
   Ktown4u). 이 경우 트윗 본문에서 실제로 어떤 아티스트의 상품인지 읽어내야 합니다.
 
-반드시 extract_event_announcements 툴을 호출해서 결과를 반환하세요. 확신이 없는 필드는
-null로 두고 confidence를 낮게 주세요. 광고/공지가 아닌 일반 트윗(팬과의 소통, 일상, 사진 등)은
-is_relevant=false로 표시하고 나머지 필드는 null로 둡니다."""
+아래 <판정기준>을 그대로 적용하세요. 기준에 없는 것을 임의로 통과시키지 마세요.
+반드시 extract_event_announcements 툴을 호출해서 결과를 반환하고, is_relevant=false 인 건은
+note에 세 질문 중 어디서 걸렸는지를 한 줄로 남기세요."""
+
+# 판정 기준의 단일 출처. 사람이 읽는 문서이자 프롬프트 본문이라 코드가 아니라 파일로 둔다.
+# 기준을 바꿀 때 이 파일만 고치면 되고, 스킬 문서와 프롬프트가 갈라지지 않는다.
+# 근거: 2026-08-12 사람 라벨 60건 감사. 모델 통과 30건 중 21건이 오탐이었고
+# 그 21건이 전부 기준 파일의 "세 질문"으로 설명된다.
+RULES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "prompts", "classification_rules.md")
+_SYSTEM_PROMPT_CACHE = None
+
+
+def build_system_prompt():
+    """SYSTEM_PROMPT_BASE + prompts/classification_rules.md 를 합쳐 돌려준다."""
+    global _SYSTEM_PROMPT_CACHE
+    if _SYSTEM_PROMPT_CACHE is not None:
+        return _SYSTEM_PROMPT_CACHE
+    try:
+        with open(RULES_PATH, encoding="utf-8") as f:
+            rules = f.read().strip()
+    except OSError:
+        log.warning("판정 기준 파일을 못 읽었습니다: %s — 기준 없이 진행합니다", RULES_PATH)
+        rules = ""
+    _SYSTEM_PROMPT_CACHE = (
+        SYSTEM_PROMPT_BASE + "\n\n<판정기준>\n" + rules + "\n</판정기준>"
+        if rules else SYSTEM_PROMPT_BASE
+    )
+    return _SYSTEM_PROMPT_CACHE
 
 
 def _entity_master_has_aliases(bq):
@@ -355,8 +384,18 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
             for e in recent_events
         )
 
+    # 링크 도메인을 모델에 같이 넘긴다. 본문 링크는 전부 t.co 라 모델이 도메인을 볼 수 없고,
+    # 판정 기준의 "링크 도메인" 절이 그대로 사문화되기 때문이다.
+    def _link_hosts(t):
+        urls = extract_link_urls(t.get("entities_json"), t.get("ref_entities_json"))
+        hosts = sorted({re.sub(r"^www\.", "", m.group(1).lower())
+                        for u in urls for m in [_HOST_RE.match(u)] if m})
+        return ", ".join(hosts) if hosts else "링크 없음"
+
     tweets_block = "\n".join(
-        f'- tweet_id: {t["tweet_id"]} | 작성일: {t["tweet_created_at"]}\n  본문: {t["tweet_text"]}'
+        f'- tweet_id: {t["tweet_id"]} | 작성일: {t["tweet_created_at"]}\n'
+        f'  본문: {t["tweet_text"]}\n'
+        f'  링크 도메인: {_link_hosts(t)}'
         for t in tweets
     )
 
@@ -378,7 +417,7 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
     resp = client.messages.create(
         model=MODEL,
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
+        system=build_system_prompt(),
         tools=[TOOL_SCHEMA],
         tool_choice={"type": "tool", "name": "extract_event_announcements"},
         messages=[{"role": "user", "content": user_msg}],
@@ -429,6 +468,11 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
         if not (seller_name or "").strip() and seller_entity_id:
             seller_name = id_to_name.get(seller_entity_id)
 
+        # [2026-08-12] 이 필터의 적용 범위를 "전체"로 넓히지 말 것.
+        #   링크가 없으면 제외하는 규칙이라, 이미지만 붙은 진짜 판매 공지가 같이 죽는다.
+        #   실제로 사람 라벨에서 정답 처리된 MusicKorea 응모 마감 리마인드가
+        #   이미지 링크뿐이라 "링크없음"으로 걸린다. 판정은 프롬프트가 하고,
+        #   이 필터는 판매처조차 못 잡은 잔여분만 정리하는 백스톱으로 남긴다.
         # [2026-08-10] 판매처가 끝내 미상인 게시물에만 비판매 필터를 적용한다.
         #   LLM이 "이벤트성 공지"를 넓게 잡아서 음원 발매 / 시상식·음악방송 투표 /
         #   방송 참여·인원체크 / 콘서트 공지까지 is_relevant=TRUE로 들어오는데,
