@@ -1,0 +1,59 @@
+name: Recurate (curation only)
+
+# 큐레이션만 다시 돌린다. X API 는 부르지 않는다 — 원문은 이미 x_posts_raw 에 있다.
+# 판정 기준(prompts/classification_rules.md)을 바꾼 뒤, 과거분까지 새 기준으로
+# 다시 매기고 싶을 때 쓴다.
+#
+# 실행 전에 반드시 recurate_reset SQL 의 STEP 1~3 을 먼저 돌릴 것.
+#   1) x_event_announcements 백업
+#   2) 기존 큐레이션 결과 삭제   ← 건너뛰면 WRITE_APPEND 라 중복으로 쌓인다
+#   3) x_posts_raw.is_curated = FALSE
+on:
+  workflow_dispatch:
+    inputs:
+      curation_model:
+        description: '모델 override. 비워두면 프로덕션과 같은 Sonnet 5.'
+        required: false
+        default: ''
+      confirm:
+        description: 'SQL STEP 1~3 을 실행했으면 RESET 이라고 입력하세요.'
+        required: true
+        default: ''
+
+jobs:
+  recurate:
+    runs-on: ubuntu-latest
+    # 13,000여 건 / 약 330회 Claude 호출. Backfill(180분)보다 넉넉하게 잡는다.
+    timeout-minutes: 300
+    steps:
+      - name: Check confirmation
+        if: ${{ github.event.inputs.confirm != 'RESET' }}
+        run: |
+          echo "confirm 입력이 RESET 이 아닙니다. 재큐레이션을 중단합니다."
+          echo "기존 결과를 지우지 않고 돌리면 같은 트윗이 중복으로 쌓입니다."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Curate (raw -> x_event_announcements)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
+        run: python curate_events.py
+
+      - name: Upload run summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recurate-${{ github.run_id }}
+          path: |
+            run_summary*.csv
+          if-no-files-found: ignore
