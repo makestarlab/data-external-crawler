@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -417,14 +418,30 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
         + tweets_block
     )
 
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=16000,   # [2026-08-12] 4096 -> 16000. 응답이 잘려 배치가 통째로 유실됐다
-        system=build_system_prompt(),
-        tools=[TOOL_SCHEMA],
-        tool_choice={"type": "tool", "name": "extract_event_announcements"},
-        messages=[{"role": "user", "content": user_msg}],
-    )
+    # [2026-08-12] 재시도. 예전엔 429/529 한 번이면 예외가 위로 올라가
+    #   그 계정 전체가 스킵됐다 (2026-08-12 재큐레이션에서 11개 계정 1,709건이 이렇게 남음).
+    #   호출 수가 많은 계정일수록 확률이 높아 판매처가 집중적으로 당했다.
+    resp = None
+    for attempt in range(5):
+        try:
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=16000,   # [2026-08-12] 4096 -> 16000. 응답이 잘려 배치가 통째로 유실됐다
+                system=build_system_prompt(),
+                tools=[TOOL_SCHEMA],
+                tool_choice={"type": "tool", "name": "extract_event_announcements"},
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            break
+        except Exception as e:
+            if attempt == 4:
+                log.error("%s: Claude 호출 5회 모두 실패 (%s). 이 배치 %d건은 미처리로 남깁니다.",
+                          x_handle, type(e).__name__, len(tweets))
+                return []
+            wait = 2 ** attempt * 3          # 3, 6, 12, 24초
+            log.warning("%s: Claude 호출 실패 (%s), %d초 후 재시도 (%d/5)",
+                        x_handle, type(e).__name__, wait, attempt + 1)
+            time.sleep(wait)
     if getattr(resp, "stop_reason", None) == "max_tokens":
         log.error("%s: 응답이 max_tokens에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
                   x_handle, len(tweets))
@@ -605,9 +622,17 @@ def main():
         try:
             all_extractions = []
             for batch in chunked(tweets, MAX_TWEETS_PER_CALL):
-                results = call_claude(
-                    client, x_handle, entity_type, known_artist_name, artist_roster, recent_events, batch
-                )
+                # [2026-08-12] 배치 단위로 예외를 가둔다. 예전엔 배치 하나가 죽으면
+                #   그 계정 전체가 스킵돼, 트윗이 많은 판매처일수록 통째로 빠졌다.
+                try:
+                    results = call_claude(
+                        client, x_handle, entity_type, known_artist_name,
+                        artist_roster, recent_events, batch
+                    )
+                except Exception:
+                    log.exception("%s: 배치 %d건 실패 - 미처리로 남기고 다음 배치 진행",
+                                  x_handle, len(batch))
+                    continue
                 all_extractions.extend(results)
 
             extracted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
