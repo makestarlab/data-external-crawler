@@ -447,7 +447,28 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
                   x_handle, len(tweets))
     for block in resp.content:
         if block.type == "tool_use" and block.name == "extract_event_announcements":
-            return block.input.get("results", [])
+            raw_results = block.input.get("results") or []
+            if not isinstance(raw_results, list):
+                log.error("%s: results가 배열이 아닙니다 (%s). 이 배치 %d건 미처리.",
+                          x_handle, type(raw_results).__name__, len(tweets))
+                return []
+            # [2026-08-13] 모델이 배열 안에 딕셔너리 대신 문자열을 하나 섞어 보내는 일이
+            #   드물게 있다. 그대로 두면 build_curated_rows에서 TypeError가 나고
+            #   계정 하나가 통째로 스킵된다 (EVERLINESHOP 366건, NCTsmtown 382건 등).
+            #   여기서 걸러내면 나머지 정상 항목은 살고, 걸러진 트윗은
+            #   결과에 안 담겼으므로 다음 실행에서 자동 재시도된다.
+            results, bad = [], 0
+            for r in raw_results:
+                if isinstance(r, dict) and r.get("tweet_id"):
+                    results.append(r)
+                else:
+                    bad += 1
+            if bad:
+                log.warning("%s: 형식이 어긋난 결과 %d건을 건너뜁니다 (예: %r)",
+                            x_handle, bad,
+                            next((r for r in raw_results
+                                  if not (isinstance(r, dict) and r.get("tweet_id"))), None))
+            return results
     log.warning("%s: 응답에 tool_use 블록이 없습니다. 트윗 %d건 결과 없음.", x_handle, len(tweets))
     return []
 
@@ -458,6 +479,11 @@ def build_curated_rows(x_handle, raw_by_tweet_id, extractions, recent_events, na
     rows = []
 
     for res in extractions:
+        # [2026-08-13] 이중 방어. 여기서 터지면 계정 하나가 통째로 날아간다.
+        if not isinstance(res, dict) or not res.get("tweet_id"):
+            log.warning("%s: 형식이 어긋난 결과 항목을 건너뜁니다: %r", x_handle, res)
+            continue
+
         raw = raw_by_tweet_id.get(res["tweet_id"])
         if raw is None:
             log.warning("알 수 없는 tweet_id가 결과에 포함됨: %s", res["tweet_id"])
