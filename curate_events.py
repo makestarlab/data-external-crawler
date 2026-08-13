@@ -43,7 +43,10 @@ ENTITY_TABLE = f"{PROJECT_ID}.{DATASET}.entity_master"
 
 MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
 RECENT_WINDOW_DAYS = 21   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
-MAX_TWEETS_PER_CALL = 40  # 계정당 한 배치의 최대 트윗 수 (통상 하루 0~10건이라 넉넉함)
+MAX_TWEETS_PER_CALL = 15  # 계정당 한 배치의 최대 트윗 수
+#   [2026-08-12] 40 -> 15. 40건을 한 번에 보내면 응답이 max_tokens에 걸려
+#   tool_use 블록이 잘리고, 그 배치 40건이 통째로 결과에서 사라졌다.
+#   판매처 계정은 채울 필드가 많아 특히 심했다 (EVERLINESHOP 364건 중 360건 유실).
 
 # =============================================================================
 # [2026-08-10] 비판매 게시물 필터 (도메인 기반)
@@ -416,15 +419,19 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
 
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=4096,
+        max_tokens=16000,   # [2026-08-12] 4096 -> 16000. 응답이 잘려 배치가 통째로 유실됐다
         system=build_system_prompt(),
         tools=[TOOL_SCHEMA],
         tool_choice={"type": "tool", "name": "extract_event_announcements"},
         messages=[{"role": "user", "content": user_msg}],
     )
+    if getattr(resp, "stop_reason", None) == "max_tokens":
+        log.error("%s: 응답이 max_tokens에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
+                  x_handle, len(tweets))
     for block in resp.content:
         if block.type == "tool_use" and block.name == "extract_event_announcements":
             return block.input.get("results", [])
+    log.warning("%s: 응답에 tool_use 블록이 없습니다. 트윗 %d건 결과 없음.", x_handle, len(tweets))
     return []
 
 
@@ -610,7 +617,17 @@ def main():
             )
 
             load_curated_rows(bq, rows)
-            mark_curated(bq, [t["tweet_id"] for t in tweets])
+
+            # [2026-08-12] 배치 전체를 무조건 완료 처리하면 안 된다.
+            #   모델 응답이 잘리거나 일부 tweet_id가 빠져서 돌아오면, 그 트윗은
+            #   결과가 없는데도 is_curated=TRUE가 찍혀 영원히 사라진다.
+            #   실제로 결과가 돌아온 것만 완료 처리하고, 나머지는 다음 실행에서 다시 집는다.
+            done_ids = {r["tweet_id"] for r in rows}
+            missing = [t["tweet_id"] for t in tweets if t["tweet_id"] not in done_ids]
+            if missing:
+                log.warning("%s: %d/%d건이 결과에 없어 미처리로 남깁니다 (다음 실행에서 재시도)",
+                            x_handle, len(missing), len(tweets))
+            mark_curated(bq, list(done_ids))
 
             total_processed += len(tweets)
             total_relevant += sum(1 for r in rows if r["is_relevant"])
