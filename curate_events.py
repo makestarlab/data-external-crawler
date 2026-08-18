@@ -43,7 +43,19 @@ CURATED_TABLE = f"{PROJECT_ID}.{DATASET}.x_event_announcements"
 ENTITY_TABLE = f"{PROJECT_ID}.{DATASET}.entity_master"
 
 MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
-RECENT_WINDOW_DAYS = 21   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
+RECENT_WINDOW_DAYS = 45   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
+#   [2026-08-13] 21 -> 45. 같은 이벤트 공지가 21일 넘게 띄엄띄엄 올라오면 뒤엣것이
+#   목록에서 빠져 "새 이벤트"로 잡히고, 같은 event_group_id에 대표가 둘 생겼다(29개 그룹).
+#
+#   45는 실측값이다. 여러 번 공지된 이벤트 619건의 첫 공지~마지막 공지 간격 분포:
+#     중앙값 3일 · p75 11일 · p90 26일 · p95 34일 · p99 44일 · 최대 47일
+#   21일 창은 상위 10%를 놓치고 있었다. 45일이면 99%를 덮고, 넘는 건 79건 중 2건뿐.
+#   60일로 더 늘려도 2건을 더 얻을 뿐이라 목록만 길어진다.
+#   중앙값이 3일이라 짧게 잡기 쉬운데, 문제를 만드는 건 항상 꼬리 쪽이다.
+MAX_RECENT_PER_HANDLE = 80
+#   창을 넓히면 목록이 길어진다(21일 593건 -> 45일 1,209건, EVERLINESHOP 한 계정만 136건).
+#   목록이 길수록 모델이 그걸 근거로 통과시키는 오판이 늘어나므로(2026-08-12에 정확도
+#   96.7% -> 91.7%로 떨어진 원인) 계정당 상한을 두고 최신순으로 자른다.
 MAX_TWEETS_PER_CALL = 15  # 계정당 한 배치의 최대 트윗 수
 #   [2026-08-12] 40 -> 15. 40건을 한 번에 보내면 응답이 max_tokens에 걸려
 #   tool_use 블록이 잘리고, 그 배치 40건이 통째로 결과에서 사라졌다.
@@ -364,6 +376,9 @@ def fetch_recent_representatives(bq, handles):
         SELECT x_handle, event_key, event_group_id, artist_name, album_or_title, event_name
         FROM `{CURATED_TABLE}`
         WHERE is_representative AND run_date >= @cutoff AND x_handle IN UNNEST(@handles)
+        QUALIFY ROW_NUMBER() OVER (
+          PARTITION BY x_handle ORDER BY run_date DESC, tweet_created_at DESC
+        ) <= {MAX_RECENT_PER_HANDLE}
         """,
         job_config=bigquery.QueryJobConfig(query_parameters=[
             bigquery.ScalarQueryParameter("cutoff", "DATE", cutoff),
