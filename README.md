@@ -23,6 +23,34 @@ GitHub Actions에서 매일 1회 실행되며:
   라이브러리 기반 적재로 전환했다.
 - **상태 갱신**: 파라미터 바인딩된 MERGE 쿼리 (`ArrayQueryParameter` + `StructQueryParameter`)를
   사용한다. 마찬가지로 SQL 텍스트 조립을 피하기 위함이다.
+- **팔로워 일별 스냅샷**: `makestar_ax.x_follower_daily`에 계정별 `public_metrics`를
+  `(run_date, x_handle)` 키로 MERGE 업서트한다 (2026-08-19 추가, 아래 참고).
+
+#### 팔로워 추세 테이블 `x_follower_daily`
+
+`x_crawl_state.x_follower_count`는 매 실행 덮어쓰기라 **현재값 스냅샷**만 남는다. 일별 추세를
+보려면 날짜별 행이 쌓여야 해서 파티션 테이블을 따로 뒀다. `/2/users/by`는 어차피 매 실행마다
+전체 핸들에 대해 호출하므로 **이 테이블 때문에 X API 과금이 늘지는 않는다.**
+
+- 파티션: `run_date`(KST) / 클러스터: `entity_type`, `x_handle`
+- 컬럼: `follower_count`, `following_count`, `post_count`, `listed_count`, `like_count`,
+  `media_count`, `is_verified` — `like_count`/`media_count`는 X가 안 내려줄 때가 많아 대부분 NULL
+- `post_count`는 X가 필드명을 `tweet_count` → `post_count`로 바꾼 이력이 있어 코드에서 둘 다 받는다
+- **INSERT가 아니라 MERGE인 이유**: 같은 날 워크플로를 수동 재실행해도 하루 1행만 유지하기 위함.
+  재실행하면 그날 행이 더 나중 값으로 갱신된다.
+- 스냅샷 행은 **user lookup 성공 직후**에 담는다. 뒤이어 트윗 수집이 실패(`ERROR`)해도 그날
+  팔로워 수는 남아서 추세에 구멍이 안 생긴다.
+- 전일 대비 증감은 뷰 `x_follower_daily_delta`를 쓴다. 크롤러가 하루 걸러 실패하면
+  `days_since_prev`가 2 이상이 되므로, 증감을 해석할 때 **반드시 이 컬럼을 같이 볼 것**
+  (2일치 증가분을 하루 증가분으로 오해하기 쉽다).
+
+```sql
+-- 최근 2주, 판매처 팔로워 증감 상위
+SELECT run_date, x_handle, follower_count, follower_delta, days_since_prev
+FROM `makestar-dw.makestar_ax.x_follower_daily_delta`
+WHERE entity_type = 'SELLER' AND run_date >= CURRENT_DATE('Asia/Seoul') - 14
+ORDER BY run_date DESC, follower_delta DESC
+```
 
 ### 2단계 - 큐레이션 (`curate_events.py`)
 
