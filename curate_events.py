@@ -56,6 +56,11 @@ MAX_RECENT_PER_HANDLE = 80
 #   창을 넓히면 목록이 길어진다(21일 593건 -> 45일 1,209건, EVERLINESHOP 한 계정만 136건).
 #   목록이 길수록 모델이 그걸 근거로 통과시키는 오판이 늘어나므로(2026-08-12에 정확도
 #   96.7% -> 91.7%로 떨어진 원인) 계정당 상한을 두고 최신순으로 자른다.
+MISS_RATE_ALERT = 0.10
+#   [2026-08-24] 미처리율이 이 값을 넘으면 워크플로를 실패(빨간불) 처리한다.
+#   그전까지는 계정 단위 실패를 전부 삼켜서 Actions가 항상 초록불이었고, 8/22~8/24에
+#   미처리율이 0% -> 1.9% -> 6.1% -> 29.8%로 올라가는 동안 아무 신호가 없었다.
+#   미처리 행은 다음 실행에서 재시도되므로 데이터 유실은 아니다. "사람이 봐야 한다"는 신호다.
 MAX_TWEETS_PER_CALL = 15  # 계정당 한 배치의 최대 트윗 수
 #   [2026-08-12] 40 -> 15. 40건을 한 번에 보내면 응답이 max_tokens에 걸려
 #   tool_use 블록이 잘리고, 그 배치 40건이 통째로 결과에서 사라졌다.
@@ -395,6 +400,41 @@ def make_group_id(x_handle, event_key):
     return hashlib.sha1(f"{x_handle}|{event_key}".encode("utf-8")).hexdigest()[:20]
 
 
+def _err_detail(e, limit=400):
+    """예외에서 서버가 실제로 준 메시지를 뽑아낸다.
+
+    [2026-08-24] 이전엔 `type(e).__name__`만 로그에 남겼다. 그래서 8/22~8/24에 배치가
+      줄줄이 죽었을 때 로그에 `BadRequestError`만 찍히고, 요청이 잘못된 건지 크레딧이
+      떨어진 건지 한도에 걸린 건지 구분할 방법이 없었다. 원인을 못 좁히면 고칠 수도 없다.
+    """
+    parts = []
+    status = getattr(e, "status_code", None)
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error") if isinstance(body.get("error"), dict) else {}
+        if err.get("type"):
+            parts.append(err["type"])
+        msg = err.get("message") or body.get("message")
+        if msg:
+            parts.append(str(msg))
+    if len(parts) <= 1:
+        parts.append(str(e))
+    return " | ".join(parts)[:limit]
+
+
+def _is_permanent(e):
+    """재시도해도 결과가 같은 오류인가.
+
+    4xx 중 재시도가 의미 있는 건 429(rate limit)뿐이다. 400/401/403은 같은 요청을 다시
+    보내봐야 같은 답이 온다. 실제로 2026-08-24 실행에서 400을 계정마다 5번씩 다시 쳐서
+    배치당 45초(3+6+12+24)를 버렸고, 그 바람에 뒤쪽 계정들이 통째로 밀렸다.
+    """
+    status = getattr(e, "status_code", None)
+    return isinstance(status, int) and 400 <= status < 500 and status != 429
+
+
 def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster, recent_events, tweets):
     recent_block = "없음"
     if recent_events:
@@ -449,13 +489,20 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
             )
             break
         except Exception as e:
+            detail = _err_detail(e)
+            # [2026-08-24] 400 계열은 재시도해도 같은 답이 온다. 즉시 포기하고,
+            #   무엇보다 서버가 준 메시지를 그대로 남긴다.
+            if _is_permanent(e):
+                log.error("%s: Claude 호출 실패 - 재시도해도 같은 오류 (%s). 이 배치 %d건 미처리. 상세: %s",
+                          x_handle, type(e).__name__, len(tweets), detail)
+                return []
             if attempt == 4:
-                log.error("%s: Claude 호출 5회 모두 실패 (%s). 이 배치 %d건은 미처리로 남깁니다.",
-                          x_handle, type(e).__name__, len(tweets))
+                log.error("%s: Claude 호출 5회 모두 실패 (%s). 이 배치 %d건은 미처리로 남깁니다. 상세: %s",
+                          x_handle, type(e).__name__, len(tweets), detail)
                 return []
             wait = 2 ** attempt * 3          # 3, 6, 12, 24초
-            log.warning("%s: Claude 호출 실패 (%s), %d초 후 재시도 (%d/5)",
-                        x_handle, type(e).__name__, wait, attempt + 1)
+            log.warning("%s: Claude 호출 실패 (%s), %d초 후 재시도 (%d/5). 상세: %s",
+                        x_handle, type(e).__name__, wait, attempt + 1, detail)
             time.sleep(wait)
     if getattr(resp, "stop_reason", None) == "max_tokens":
         log.error("%s: 응답이 max_tokens에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
@@ -650,6 +697,7 @@ def main():
 
     total_processed = 0
     total_relevant = 0
+    failures = []   # (x_handle, 미처리 건수, 전체 건수)
 
     for x_handle, tweets in by_handle.items():
         entity_type = tweets[0]["entity_type"]
@@ -691,6 +739,7 @@ def main():
             done_ids = {r["tweet_id"] for r in rows}
             missing = [t["tweet_id"] for t in tweets if t["tweet_id"] not in done_ids]
             if missing:
+                failures.append((x_handle, len(missing), len(tweets)))
                 log.warning("%s: %d/%d건이 결과에 없어 미처리로 남깁니다 (다음 실행에서 재시도)",
                             x_handle, len(missing), len(tweets))
             mark_curated(bq, list(done_ids))
@@ -701,10 +750,30 @@ def main():
         except Exception:
             # 계정 하나 실패해도 나머지 계정은 계속 처리한다. 실패한 계정의 raw 행은
             # is_curated=FALSE로 남아있으므로 다음 실행에서 자동으로 재시도된다.
+            failures.append((x_handle, len(tweets), len(tweets)))
             log.exception("%s 큐레이션 실패 - is_curated=FALSE로 남겨두고 다음 실행에서 재시도", x_handle)
 
     log.info("큐레이션 완료: %d개 계정 대상, %d건 처리, %d건 유의미한 이벤트로 추출",
               len(by_handle), total_processed, total_relevant)
+
+    total_tweets = sum(len(v) for v in by_handle.values())
+    total_missing = sum(m for _, m, _ in failures)
+    miss_rate = (total_missing / total_tweets) if total_tweets else 0.0
+
+    if failures:
+        # [2026-08-24] 실패를 마지막에 한 번 더 모아 찍는다. 계정별 경고는 수백 줄 로그
+        #   중간에 묻혀서, 실제로 아무도 눈치채지 못한 채 3일이 지났다.
+        log.error("미처리 계정 %d개 / 트윗 %d건 (전체 %d건 중 %.1f%%):",
+                  len(failures), total_missing, total_tweets, 100.0 * miss_rate)
+        for handle, missing_n, total_n in sorted(failures, key=lambda x: -x[1]):
+            log.error("  - %s: %d/%d건 미처리", handle, missing_n, total_n)
+
+    if miss_rate > MISS_RATE_ALERT:
+        raise RuntimeError(
+            f"미처리율 {100.0 * miss_rate:.1f}%가 임계치 {100.0 * MISS_RATE_ALERT:.0f}%를 "
+            f"넘었습니다 (미처리 {total_missing}/{total_tweets}건). 로그의 '미처리 계정' 목록과 "
+            f"'상세:' 줄의 API 오류 메시지를 확인하세요."
+        )
 
 
 if __name__ == "__main__":
