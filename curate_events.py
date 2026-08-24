@@ -400,6 +400,46 @@ def make_group_id(x_handle, event_key):
     return hashlib.sha1(f"{x_handle}|{event_key}".encode("utf-8")).hexdigest()[:20]
 
 
+def _try_json(s):
+    try:
+        return json.loads(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _coerce_results(raw, x_handle):
+    """모델이 results를 규격대로 안 줄 때 버리기 전에 최대한 살려낸다.
+
+    지금까지 본 변형 두 가지:
+      - [2026-08-13] 배열 안에 딕셔너리 대신 문자열이 섞여 옴 → 그 항목만 버렸다
+      - [2026-08-24] results 자체가 "배열을 JSON 직렬화한 문자열"로 옴 → 배치를 통째로 버렸다.
+        NCTsmtown_127 10건이 8/23부터 매일 이렇게 유실되고 있었다. 재시도해도 모델이 매번
+        같은 형태로 답해서 영원히 안 풀렸다.
+
+    둘 다 내용 자체는 멀쩡하다. 버리기 전에 한 번 파싱해보고, 그래도 안 되면 그때 포기한다.
+    반환: 정규화된 list, 또는 살릴 수 없으면 None.
+    """
+    if isinstance(raw, str):
+        parsed = _try_json(raw)
+        if isinstance(parsed, list):
+            log.warning("%s: results가 문자열로 와서 JSON 파싱으로 복구했습니다 (%d건)",
+                        x_handle, len(parsed))
+            raw = parsed
+        elif isinstance(parsed, dict):
+            log.warning("%s: results가 단일 객체 문자열로 와서 복구했습니다", x_handle)
+            raw = [parsed]
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for r in raw:
+        if isinstance(r, str):
+            p = _try_json(r)
+            if isinstance(p, dict):
+                r = p
+        out.append(r)
+    return out
+
+
 def _err_detail(e, limit=400):
     """예외에서 서버가 실제로 준 메시지를 뽑아낸다.
 
@@ -510,10 +550,14 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
     for block in resp.content:
         if block.type == "tool_use" and block.name == "extract_event_announcements":
             raw_results = block.input.get("results") or []
-            if not isinstance(raw_results, list):
-                log.error("%s: results가 배열이 아닙니다 (%s). 이 배치 %d건 미처리.",
-                          x_handle, type(raw_results).__name__, len(tweets))
+            coerced = _coerce_results(raw_results, x_handle)
+            if coerced is None:
+                # [2026-08-24] 실제로 뭐가 왔는지 앞부분을 같이 남긴다. 타입 이름만으로는
+                #   응답이 잘린 건지 형식만 다른 건지 알 수 없다.
+                log.error("%s: results를 배열로 해석할 수 없습니다 (%s). 이 배치 %d건 미처리. 받은 값 앞부분: %.200s",
+                          x_handle, type(raw_results).__name__, len(tweets), raw_results)
                 return []
+            raw_results = coerced
             # [2026-08-13] 모델이 배열 안에 딕셔너리 대신 문자열을 하나 섞어 보내는 일이
             #   드물게 있다. 그대로 두면 build_curated_rows에서 TypeError가 나고
             #   계정 하나가 통째로 스킵된다 (EVERLINESHOP 366건, NCTsmtown 382건 등).
