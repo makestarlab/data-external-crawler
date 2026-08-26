@@ -69,6 +69,18 @@ WHERE is_representative
   AND tweet_id NOT IN UNNEST(@exclude)
 """
 
+# 라벨된 글과 같은 계정·같은 날에 올라온 형제 글. 배치 맥락을 프로덕션과 맞추는 데 쓴다.
+SIBLINGS = """
+SELECT r.x_handle, r.tweet_id, r.tweet_created_at, r.tweet_text,
+       r.entities_json, ref.entities_json AS ref_entities_json
+FROM `makestar-dw.makestar_ax.x_posts_raw` r
+LEFT JOIN (
+  SELECT tweet_id, ANY_VALUE(entities_json) AS entities_json
+  FROM `makestar-dw.makestar_ax.x_posts_raw` GROUP BY tweet_id
+) ref ON ref.tweet_id = r.referenced_tweet_id
+WHERE CONCAT(r.x_handle, '|', CAST(DATE(r.tweet_created_at) AS STRING)) IN UNNEST(@keys)
+"""
+
 FEWSHOT = """
 SELECT tweet_id, verdict, reason
 FROM `makestar-dw.makestar_ax.x_curation_labels_latest`
@@ -134,6 +146,27 @@ def recent_window_for(all_recent, x_handle, anchor):
     return picked[:ce.MAX_RECENT_PER_HANDLE]
 
 
+def fetch_siblings(client, rows):
+    """라벨된 글과 같은 계정·같은 날의 원문 글을 (계정, 날짜) 별로 모아 온다.
+
+    [2026-08-26] `🔗 이벤트 상품 : …` 처럼 링크만 있는 후속 글은 본문만으로 판정이 안 된다.
+      프로덕션에서는 원 이벤트 글과 **같은 배치**에 들어가서 풀린다 — 트윗 id 가 연속인 걸
+      보면 같은 초에 올라온 형제 글이다. 그런데 평가에서는 라벨된 글만 배치에 넣었다.
+      맥락을 통째로 빼고 물어본 셈이라, 프로덕션은 맞히는 건을 평가만 계속 틀렸다
+      (B층 FN 2건이 프롬프트를 어떻게 고쳐도 안 없어졌다).
+    """
+    keys = sorted({"%s|%s" % (r["x_handle"], r["tweet_created_at"].date().isoformat())
+                   for r in rows})
+    out = defaultdict(dict)
+    got = list(client.query(SIBLINGS, job_config=bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ArrayQueryParameter("keys", "STRING", keys),
+    ])).result())
+    for r in got:
+        d = dict(r)
+        out[(d["x_handle"], d["tweet_created_at"].date())][d["tweet_id"]] = d
+    return {k: list(v.values()) for k, v in out.items()}
+
+
 def norm(s):
     return (s or "").strip().lower().replace(" ", "")
 
@@ -174,8 +207,20 @@ def main():
     for r in rows:
         by_handle[r["x_handle"]].append(r)
     all_ids = [r["tweet_id"] for r in rows]
-    anchors = {h: max(r["tweet_created_at"] for r in b).date() for h, b in by_handle.items()}
-    recent_all = fetch_recent_excluding(client, list(by_handle), all_ids, min(anchors.values()))
+
+    # 같은 계정·같은 날 형제 글을 먼저 가져온다. 배치 맥락이 프로덕션과 같아야 한다.
+    siblings = fetch_siblings(client, rows)
+
+    # 최근 이벤트 목록에서는 **이번 배치에 들어가는 글이 만든 행을 전부** 뺀다.
+    #   형제 글의 결과까지 목록에 남아 있으면, 프로덕션 실행 시점엔 아직 없던 정답을
+    #   미리 흘려주는 셈이 된다.
+    batch_ids = sorted(set(all_ids) | {s["tweet_id"] for v in siblings.values() for s in v})
+
+    groups = defaultdict(list)                      # (계정, 날짜) -> 라벨된 행
+    for r in rows:
+        groups[(r["x_handle"], r["tweet_created_at"].date())].append(r)
+    recent_all = fetch_recent_excluding(client, list(by_handle), batch_ids,
+                                        min(d for _, d in groups))
 
     print("평가 대상 %d건 / 계정 %d개 / 모델 %s / few-shot %d"
           % (len(rows), len(by_handle), MODEL, args.few_shot))
@@ -185,14 +230,24 @@ def main():
     detail, agg = [], defaultdict(lambda: dict(n=0, hit=0, fp=0, fn=0, t_hit=0, t_n=0))
     done = 0
 
-    for x_handle, batch in by_handle.items():
-        entity_type = batch[0]["entity_type"]
-        known_artist_name = id_to_name.get(batch[0]["entity_id"]) if entity_type == "ARTIST" else None
-        recent_events = recent_window_for(recent_all, x_handle, anchors[x_handle])
+    for (x_handle, day), labeled in groups.items():
+        entity_type = labeled[0]["entity_type"]
+        known_artist_name = id_to_name.get(labeled[0]["entity_id"]) if entity_type == "ARTIST" else None
+        recent_events = recent_window_for(recent_all, x_handle, day)
+
+        # 라벨된 글 + 같은 날 형제 글. 점수는 라벨된 글만 매긴다.
+        seen = {r["tweet_id"] for r in labeled}
+        batch = list(labeled) + [s for s in siblings.get((x_handle, day), [])
+                                 if s["tweet_id"] not in seen]
+        batch.sort(key=lambda t: t["tweet_created_at"])
+        batch = batch[:ce.MAX_TWEETS_PER_CALL * 2]
+        for r in labeled:                      # 잘려 나간 라벨 건이 없도록 되붙인다
+            if r["tweet_id"] not in {t["tweet_id"] for t in batch}:
+                batch.append(r)
 
         preds = {}
         try:
-            # 프로덕션과 똑같은 호출. 계정별 배치도 프로덕션과 같은 단위로 묶는다.
+            # 프로덕션과 똑같은 호출. 배치 단위도 프로덕션과 같다.
             for chunk in ce.chunked(batch, ce.MAX_TWEETS_PER_CALL):
                 for res in ce.call_claude(ac, x_handle, entity_type, known_artist_name,
                                           artist_roster, recent_events, chunk):
@@ -200,7 +255,7 @@ def main():
         except Exception as e:
             print("  %s 실패: %s" % (x_handle, e), file=sys.stderr)
 
-        for row in batch:
+        for row in labeled:
             pred = preds.get(row["tweet_id"], {})
             p_rel = bool(pred.get("is_relevant"))
             y_rel = bool(row["y_relevant"])
@@ -228,6 +283,7 @@ def main():
                 "human_reason": row["reason"], "model_note": pred.get("note"),
                 "confidence": pred.get("confidence"),
                 "recent_events_given": len(recent_events),
+                "batch_size_given": len(batch),
                 "tweet_text": (row["tweet_text"] or "")[:200],
             })
             done += 1
