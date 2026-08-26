@@ -20,6 +20,7 @@ x_posts_raw에서 아직 처리되지 않은(is_curated=FALSE) 포스팅을 Clau
   - ANTHROPIC_API_KEY : Claude API 키
   - GCP_SERVICE_ACCOUNT_JSON : BigQuery 인증 (bq_common.py 참고)
 """
+import ast
 import hashlib
 import json
 import logging
@@ -400,11 +401,64 @@ def make_group_id(x_handle, event_key):
     return hashlib.sha1(f"{x_handle}|{event_key}".encode("utf-8")).hexdigest()[:20]
 
 
+def _salvage_objects(s):
+    """문자열에서 온전히 닫힌 {...} 덩어리만 앞에서부터 긁어낸다.
+
+    [2026-08-25] results가 문자열로 오는데 그 문자열마저 중간에서 잘려 오는 경우가 있다.
+      json.loads는 통째로 실패하지만, 잘린 지점 앞의 항목들은 멀쩡하다.
+      살릴 수 있는 만큼 살리고 나머지는 결과에 안 담기므로 다음 실행에서 자동 재시도된다.
+    """
+    out, depth, start, in_str, esc = [], 0, None, False, False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        obj = json.loads(s[start:i + 1])
+                    except ValueError:
+                        obj = None
+                    if isinstance(obj, dict):
+                        out.append(obj)
+                    start = None
+    return out
+
+
 def _try_json(s):
+    """문자열을 파싱한다. 정상 JSON이면 그대로, 아니면 살릴 수 있는 만큼 살린다."""
+    if not isinstance(s, str):
+        return None
     try:
         return json.loads(s)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as e:
+        first_err = e
+    # 파이썬 리터럴로 오는 변형 ({'tweet_id': ...})
+    try:
+        v = ast.literal_eval(s)
+        if isinstance(v, (list, dict)):
+            return v
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        pass
+    salvaged = _salvage_objects(s)
+    if salvaged:
+        log.warning("results 문자열이 온전한 JSON이 아니라 앞에서부터 %d건만 복구했습니다 (%s)",
+                    len(salvaged), first_err)
+        return salvaged
+    return None
 
 
 def _coerce_results(raw, x_handle):
@@ -554,8 +608,11 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
             if coerced is None:
                 # [2026-08-24] 실제로 뭐가 왔는지 앞부분을 같이 남긴다. 타입 이름만으로는
                 #   응답이 잘린 건지 형식만 다른 건지 알 수 없다.
-                log.error("%s: results를 배열로 해석할 수 없습니다 (%s). 이 배치 %d건 미처리. 받은 값 앞부분: %.200s",
-                          x_handle, type(raw_results).__name__, len(tweets), raw_results)
+                _rr = raw_results if isinstance(raw_results, str) else repr(raw_results)
+                log.error("%s: results를 배열로 해석할 수 없습니다 (%s, 길이 %d). 이 배치 %d건 미처리.\n"
+                          "  앞부분: %.200s\n  뒷부분: %.200s",
+                          x_handle, type(raw_results).__name__, len(_rr), len(tweets),
+                          _rr, _rr[-200:])
                 return []
             raw_results = coerced
             # [2026-08-13] 모델이 배열 안에 딕셔너리 대신 문자열을 하나 섞어 보내는 일이
