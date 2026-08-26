@@ -61,7 +61,7 @@ ORDER BY r.x_handle, r.tweet_created_at
 
 # 프로덕션의 fetch_recent_representatives 와 같되, 평가 대상 트윗이 만든 행은 제외한다.
 RECENT = """
-SELECT x_handle, event_key, event_group_id, artist_name, album_or_title, event_name
+SELECT x_handle, run_date, event_key, event_group_id, artist_name, album_or_title, event_name
 FROM `makestar-dw.makestar_ax.x_event_announcements`
 WHERE is_representative
   AND run_date >= @cutoff
@@ -100,8 +100,21 @@ def load_fewshot(client, n_per_class):
     return "\n".join(lines)
 
 
-def fetch_recent_excluding(client, handles, exclude_ids):
-    cutoff = (ce.datetime.now(ce.timezone.utc) - ce.timedelta(days=ce.RECENT_WINDOW_DAYS)).date().isoformat()
+def fetch_recent_excluding(client, handles, exclude_ids, oldest_anchor):
+    """평가 대상이 처리되던 그 시점의 '최근 이벤트 목록'을 만들기 위한 원본을 긁어온다.
+
+    [2026-08-26] 예전에는 cutoff 를 **오늘 - 45일** 로 잡았다. 라벨은 고정인데 기준일이
+      매일 밀리니, 시간이 갈수록 원 이벤트가 창 밖으로 빠져나가 링크만 붙은 후속 트윗이
+      풀리지 않게 된다. 프롬프트를 안 건드려도 점수가 계속 떨어졌다
+      (96.7% → 95.0% → 93.3%). 프롬프트 문제가 아니라 자(尺)가 움직인 것이다.
+
+      게다가 상한이 없어서 **평가 대상 트윗보다 나중에 생긴 이벤트**까지 목록에 들어갔다.
+      정답을 미래에서 흘려주는 셈이라 반대 방향 누수였다.
+
+      지금은 계정별로 그 계정 평가 트윗의 마지막 날짜를 기준(anchor)으로 삼아
+      [anchor-45일, anchor] 구간만 준다. 실제 프로덕션이 그때 봤던 것과 같아진다.
+    """
+    cutoff = (oldest_anchor - ce.timedelta(days=ce.RECENT_WINDOW_DAYS)).isoformat()
     rows = list(client.query(RECENT, job_config=bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("cutoff", "DATE", cutoff),
         bigquery.ArrayQueryParameter("handles", "STRING", handles),
@@ -111,6 +124,14 @@ def fetch_recent_excluding(client, handles, exclude_ids):
     for r in rows:
         by_handle[r["x_handle"]].append(dict(r))
     return by_handle
+
+
+def recent_window_for(all_recent, x_handle, anchor):
+    """계정 하나에 대해 [anchor-45일, anchor] 구간만 남기고 프로덕션과 같은 상한을 건다."""
+    lo = anchor - ce.timedelta(days=ce.RECENT_WINDOW_DAYS)
+    picked = [e for e in all_recent.get(x_handle, []) if lo <= e["run_date"] <= anchor]
+    picked.sort(key=lambda e: e["run_date"], reverse=True)
+    return picked[:ce.MAX_RECENT_PER_HANDLE]
 
 
 def norm(s):
@@ -153,7 +174,8 @@ def main():
     for r in rows:
         by_handle[r["x_handle"]].append(r)
     all_ids = [r["tweet_id"] for r in rows]
-    recent_by_handle = fetch_recent_excluding(client, list(by_handle), all_ids)
+    anchors = {h: max(r["tweet_created_at"] for r in b).date() for h, b in by_handle.items()}
+    recent_all = fetch_recent_excluding(client, list(by_handle), all_ids, min(anchors.values()))
 
     print("평가 대상 %d건 / 계정 %d개 / 모델 %s / few-shot %d"
           % (len(rows), len(by_handle), MODEL, args.few_shot))
@@ -166,7 +188,7 @@ def main():
     for x_handle, batch in by_handle.items():
         entity_type = batch[0]["entity_type"]
         known_artist_name = id_to_name.get(batch[0]["entity_id"]) if entity_type == "ARTIST" else None
-        recent_events = recent_by_handle.get(x_handle, [])
+        recent_events = recent_window_for(recent_all, x_handle, anchors[x_handle])
 
         preds = {}
         try:
