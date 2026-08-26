@@ -145,8 +145,37 @@ mubeatmall.shop · kpop2gether · higher.market · mnetplusmerch · tblshop · k
 | `seller_name` | 본문에 명시된 판매처만. 없으면 비운다 — 추측 금지 |
 | `event_type` | 팬사인회 / 영상통화 / 럭키드로우 / 응모특전 / 예약판매 / 단독한정 / 기타 |
 | `event_name` | 이벤트 고유명. 타이틀과 섞지 않는다 |
-| `event_key` | 같은 이벤트의 반복 공지를 묶는 키. 도시·회차가 다르면 다른 이벤트다 |
+| `event_key` | 같은 이벤트의 반복 공지를 묶는 키. **아래 `event_key 쪼개는 기준` 을 따른다** |
 | `extraction_note` | 세 질문 중 어디서 걸렸는지 또는 왜 통과인지 한 줄. 감사할 때 이것만 남는다 |
+
+### `event_key` 쪼개는 기준
+
+`event_key` 는 **같은 회차·같은 형태의 공지만** 묶는다. 아래 중 하나라도 다르면 **다른 키**다.
+
+| 다르면 키를 나눈다 | 예 |
+|---|---|
+| 참여 형태 | 대면 팬사인회 / 영상통화 / 럭키드로우 / 포토카드 응모 / 쇼케이스 초대 |
+| 영상통화 방식 | 1:1 / 단체(그룹) / 7:1 |
+| 회차·차수 | 1차 / 2차, 1회차 / 2회차 |
+| 도시·장소 | 서울 / 부산, 온라인 / 오프라인 |
+| 판매처 | 판매처가 다르면 무조건 다른 이벤트다 |
+
+키 형식은 `아티스트_타이틀_판매처_형태[_방식][_회차]` 로 소문자 스네이크케이스.
+
+```
+classy_reboot_everline_fansign_offline
+classy_reboot_everline_photocard_7to1
+artms_hyperego_applemusic_videocall_group
+artms_hyperego_applemusic_videocall_1to1
+```
+
+**같은 앨범·같은 판매처라도 형태가 다르면 별개 이벤트다.** 형태를 뭉뚱그린 키
+(`..._fansign_videocall` 처럼 둘을 한 키에 넣은 것)를 쓰지 말 것. 2026-08-26에
+이것 때문에 8개 그룹에 대표가 둘씩 생겨 대시보드에서 뒤엣것이 가려질 뻔했다
+(클라씨 `대면/단체영통` vs `카페/7:1 포토`, ARTMS `단체영통` vs `1:1영통`).
+
+반대로 **같은 이벤트를 며칠에 걸쳐 반복 공지**하는 것 — 마감 임박, 당첨자 안내,
+`🔗` 링크만 붙은 후속 글 — 은 **같은 키**다. 날짜로 키를 나누지 말 것.
 
 `album_or_title` 이 확실치 않으면 `external.musicbrainz_dim_title_full` 에서 `title` 로 조회해
 `primary_type`(Album/EP/Single)과 `first_release_date` 가 있는지 확인한다.
