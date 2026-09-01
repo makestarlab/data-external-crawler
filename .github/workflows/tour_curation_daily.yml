@@ -1,0 +1,44 @@
+name: Tour Curation Daily
+
+# x_crawler_daily.yml 에 스텝으로 붙이지 않고 워크플로를 분리한 이유
+#   기존 워크플로는 크롤링 -> 판매 이벤트 큐레이션이 한 잡에 묶여 있어서, 투어 큐레이션이
+#   실패하면 그 잡 전체가 빨갛게 뜬다. 투어 쪽은 아직 프롬프트를 다듬는 단계라 실패가
+#   잦을 수 있고, 그것 때문에 매일 도는 수집 파이프라인의 상태 표시가 흐려지면 안 된다.
+#   수집이 끝난 뒤 도는 별도 워크플로로 두고, 안정화되면 그때 합치면 된다.
+
+on:
+  schedule:
+    # 매일 21:40 UTC = 06:40 KST. x_crawler_daily(21:00 UTC 시작)가 끝난 뒤에 돌도록 40분 뒤로 뺐다.
+    - cron: '40 21 * * *'
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: '조회할 과거 일수 (기본 14). 최초 백필은 90 정도로 넣으면 된다'
+        required: false
+        default: ''
+      model:
+        description: '추출 모델 override (비워두면 claude-sonnet-5)'
+        required: false
+        default: ''
+
+jobs:
+  curate-tour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Curate tour announcements (raw -> x_tour_announcements)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          TOUR_CURATION_MODEL: ${{ github.event.inputs.model || 'claude-sonnet-5' }}
+          TOUR_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '14' }}
+        run: python curate_tour.py

@@ -186,3 +186,119 @@ GitHub Actions의 **Actions 탭 > X Crawler Daily > Run workflow**에서 `curati
   있던 걸 2026-07-30에 그룹 엔티티(`redvelvet`)를 신규 추가해서 바로잡았다. 비슷하게
   "그룹 공식 계정인데 멤버 개인 엔티티만 등록돼 있는" 케이스가 다른 아티스트에도 있을 수
   있으니 점검이 필요하다.
+
+---
+
+## 3단계 - 투어 공지 큐레이션 (`curate_tour.py`)
+
+아티스트 공식 X 계정 포스팅에서 **글로벌 투어·공연 일정**을 뽑아
+`makestar_ax.x_tour_announcements` 에 적재한다. 미주유럽사업팀의
+`글로벌 투어 현황` 시트(공연 일자·공연명·IP·국가·도시·베뉴명·판매 링크)에 대응한다.
+
+### 왜 만들었나 - 이미 수집해 놓고 안 읽고 있었다
+
+2026-08-24, 2026-08-25 에 Stray Kids 공식 계정이 올린 공지다. 둘 다 `x_posts_raw` 에
+그날 바로 적재됐다.
+
+```
+World Tour <RUN IT BANGKOK>   / 2027.01.16 (SAT) - 01.17 (SUN) @ Impact Arena
+World Tour <RUN IT SINGAPORE> / 2027.03.06 (SAT) - 03.07 (SUN) @ Singapore Indoor Stadium
+```
+
+같은 시점 수기 시트의 Stray Kids 최종 작성일은 2026-07-20, 최종 공연일은 2026-12-12 이었다.
+**네 회차 전부 시트에 없었다.** 게다가 태국·싱가포르는 Ticketmaster Discovery API 가 커버하지
+않는 구간이라, 이 경로가 아니면 사람이 인스타그램에서 우연히 보는 수밖에 없다.
+
+이미 크롤링 중인 계정이므로 **X API 추가 과금은 0원**이다.
+
+### 판정 기준
+
+`prompts/tour_extraction_rules.md` 가 단일 출처다. 프롬프트 본문이자 사람이 읽는 문서다.
+`prompts/classification_rules.md`(음반 구매 연계 이벤트 판정)와는 **완전히 별개**다.
+
+### 프리필터
+
+아티스트 계정 포스팅 전량을 Claude 에 보내면 대부분이 일상 트윗이라 낭비다.
+2026-07-01~2026-09-01 실측(아티스트 48계정, 리트윗 제외 10,963건):
+
+| 필터 | 통과 | 비율 | 하루 |
+|---|---|---|---|
+| 키워드 또는 예매처 도메인 | 1,730 | 15.8% | 27건 |
+| 위 + 날짜 표기까지 요구 | 415 | 3.8% | 7건 |
+
+**앞쪽을 쓴다.** 뒤쪽은 `Tickets Open Now!` 처럼 날짜 없이 예매 오픈만 알리는 공지를 통째로
+놓친다 (Stray Kids RUN IT SINGAPORE 티켓 오픈 공지가 정확히 그 형태). 정규식은 재현율만
+담당하고 정밀도는 Claude 의 `is_relevant` 가 맡는다.
+
+### `is_curated` 를 쓰지 않는 이유
+
+`x_posts_raw.is_curated` 는 `curate_events.py` 의 진행 상태다. 두 배치가 한 플래그를
+공유하면 먼저 도는 쪽이 상대의 미처리분을 먹어치운다. 대신 `x_tour_announcements` 에
+이미 적재된 `tweet_id` 를 안티조인해서 멱등성을 잡는다. 같은 날 두 번 돌려도 중복 호출이 없다.
+
+### 출력 테이블과 뷰
+
+| 이름 | 용도 |
+|---|---|
+| `x_tour_announcements` | 공지 1건 = 1행. `shows` 배열에 회차가 들어간다 |
+| `v_tour_shows` | 회차 단위로 펼친 뷰. 시트 한 행 = 이 뷰 한 행 |
+| `v_tour_shows_latest` | 같은 공연의 반복 공지를 `show_key` 로 접은 뷰 |
+| `v_tour_review_queue` | 확인 필요 큐. 대시보드 '입력/검토' 탭이 읽는다 |
+
+한 공지가 여러 회차를 담는 경우가 흔해서 `shows` 를 배열로 뒀다. 날짜 범위
+(`2027.03.06 - 03.07`)는 날짜마다 한 원소로 펼친다.
+
+`ticket_opens.opens_at_text` 는 **문자열로 남긴다.** 선예매 시각이 지역별 현지시각이라
+TIMESTAMP 로 강제 변환하면 반드시 어긋난다. 원문의 기준(`Local Time` / `KST`)은
+`timezone_note` 에 따로 적는다.
+
+### 확인 필요(`needs_review`) 판정
+
+다음 중 하나라도 걸리면 사람에게 보낸다.
+
+- `confidence < 0.75`
+- 일정 공지(`NEW_TOUR`/`NEW_CITY`/`SHOW_INFO`)인데 확정 날짜가 하나도 없음
+- `SHOW_INFO` 인데 공연장 결측
+- 도시 결측
+- **`entity_master` 매칭 실패** - 로스터에 없는 아티스트다. 이게 조용한 NULL 로 빠지면
+  커버리지가 떨어진 걸 아무도 모른다. 반드시 눈에 보이게 한다
+- 모델이 준 날짜가 파싱 실패
+
+### 비용
+
+| 항목 | 산출 | 월 |
+|---|---|---|
+| Claude 추출 (Sonnet 5) | 27건/일 × 30 = 810건, 25건씩 배치 = 33콜. 콜당 input 3.7K / output 2.5K | **$1.1** |
+| 신규 계정 7개 X API | 7계정 × 4건/일 × 30 × $0.005 | **$4.2** |
+| BigQuery / GitHub Actions | 배치 로드 잡, 무료 한도 내 | $0 |
+| **합계** | | **$5.3 (약 7,300원)** |
+
+### 최초 실행 순서
+
+```bash
+# 1. 테이블과 뷰 생성 (1회)
+bq query --use_legacy_sql=false < sql/x_tour_announcements.sql
+
+# 2. 과거분 백필 - Actions 탭 > Tour Curation Daily > Run workflow > lookback_days=90
+#    또는 로컬에서
+TOUR_LOOKBACK_DAYS=90 python curate_tour.py
+
+# 3. 이후 매일 06:40 KST 자동 실행
+```
+
+### 회귀 테스트
+
+```bash
+python test_curate_tour.py
+```
+
+Claude API / BigQuery 없이 순수 함수만 검증한다. 입력은 실제 적재된 공지 원문이다.
+스키마를 바꿀 때 이 테스트가 깨지는지 먼저 확인할 것.
+
+### 알려진 한계
+
+- `detect_vendor` 는 URL 과 영문 표기만 본다. "NOL 티켓에서 예매" 같은 한글 표기는 못 잡는다
+- 온라인 전용 스트리밍 시청권(Beyond LIVE, Mnet Plus)은 오프라인 공연 정보가 같이 없으면
+  `is_relevant=false` 로 뺀다. 미주유럽사업팀이 보는 건 실물 공연이라서다
+- 연도가 생략된 날짜(`12.05`)는 트윗 작성일 기준 가장 가까운 미래로 추론한다.
+  연말·연초 공지에서 틀릴 수 있어 `date_text` 에 원문을 남겨 뒀다
