@@ -105,6 +105,26 @@ r3 = ct.build_rows("Stray_Kids", raw, [{"tweet_id": "999", "is_relevant": True}]
                    name_to_id, "2026-09-01", "2026-09-01T00:00:00Z")
 check(r3 == [], "입력에 없는 tweet_id 는 버림")
 
+print("\n[results 변형 복구 - 2026-09-01 운영 실패 재현]")
+# 실제 실패: results 원소가 dict 가 아니라 str 로 와서 build_rows 가 AttributeError 로 죽었다.
+# curate_events._coerce_results 가 처리하는 변형들을 여기서도 회귀로 잡아둔다.
+import json as _json
+from curate_events import _coerce_results
+
+check(_coerce_results('[{"tweet_id":"1","is_relevant":true}]', "h") == [{"tweet_id":"1","is_relevant":True}],
+      "results 자체가 JSON 문자열로 온 경우 복구")
+mixed = _coerce_results([{"tweet_id":"1","is_relevant":True}, '{"tweet_id":"2","is_relevant":false}'], "h")
+check(all(isinstance(x, dict) for x in mixed) and len(mixed) == 2, "배열 안에 문자열이 섞인 경우 복구")
+check(_coerce_results(_json.dumps({"tweet_id":"9","is_relevant":True}), "h") == [{"tweet_id":"9","is_relevant":True}],
+      "단일 객체 문자열로 온 경우 리스트로 감싸서 복구")
+check(_coerce_results(12345, "h") is None, "복구 불가능한 타입은 None (배치 통째로 스킵)")
+
+# build_rows 가 살릴 수 없는 문자열 항목을 만나도 죽지 않고 나머지를 살리는지
+mixed_rows = ct.build_rows("Stray_Kids", raw,
+    ["복구 실패한 문자열", extraction[0]], name_to_id, "2026-09-01", "2026-09-01T00:00:00Z")
+check(len(mixed_rows) == 1, "dict 아닌 항목은 건너뛰고 나머지는 정상 처리 (배치 전체 유실 방지)")
+check(mixed_rows[0]["tweet_id"] == "1", "살아남은 항목이 올바른 트윗")
+
 print("\n[프리필터 정규식]")
 import re
 pat = re.compile(ct.TOUR_KEYWORDS)
