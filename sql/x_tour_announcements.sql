@@ -108,3 +108,20 @@ SELECT run_date, tweet_created_at, x_handle, tour_name, event_type, announcement
 FROM `makestar-dw.makestar_ax.x_tour_announcements`
 WHERE is_relevant AND needs_review
 ORDER BY tweet_created_at DESC;
+
+
+-- ---------------------------------------------------------------------------
+-- Slack 발송 상태 테이블 (notify_tour_slack.py)
+-- ---------------------------------------------------------------------------
+-- x_tour_announcements 에 notified_at 컬럼을 붙이지 않고 테이블을 나눈 이유
+--   같은 공지를 채널을 늘려 여러 곳에 보낼 수 있어야 하는데(지금은 #test-delphi 하나지만
+--   운영 전환하면 팀 채널이 붙는다) 컬럼 하나로는 "어느 채널까지 보냈는지"를 못 담는다.
+--   적재(load job)와 발송 상태를 분리해 두면 발송이 실패해도 큐레이션 결과가 더러워지지 않는다.
+CREATE TABLE IF NOT EXISTS `makestar-dw.makestar_ax.x_tour_notified` (
+  tweet_id   STRING    NOT NULL OPTIONS(description="x_tour_announcements.tweet_id"),
+  channel    STRING    NOT NULL OPTIONS(description="발송한 Slack 채널명. 예: #test-delphi"),
+  sent_at    TIMESTAMP NOT NULL,
+  status     STRING    OPTIONS(description="SENT 또는 FAILED. FAILED 는 다음 실행에서 자동 재시도된다"),
+  error_note STRING
+)
+OPTIONS(description="투어 공지 Slack 발송 이력. 중복 발송 방지용 안티조인 대상. 2026-09-01 생성");

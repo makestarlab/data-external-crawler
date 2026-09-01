@@ -20,6 +20,10 @@ on:
         description: '추출 모델 override (비워두면 claude-sonnet-5)'
         required: false
         default: ''
+      skip_slack:
+        description: 'true 로 넣으면 Slack 발송을 건너뛴다 (백필 시 채널 도배 방지)'
+        required: false
+        default: ''
 
 jobs:
   curate-tour:
@@ -42,3 +46,15 @@ jobs:
           TOUR_CURATION_MODEL: ${{ github.event.inputs.model || 'claude-sonnet-5' }}
           TOUR_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '14' }}
         run: python curate_tour.py
+
+      - name: Notify Slack (x_tour_announcements -> #test-delphi)
+        # 백필처럼 대량 처리한 직후에는 skip_slack=true 로 채널 도배를 막는다.
+        # 그래도 발송 이력이 안 남으므로 다음 정기 실행에서 최근 3일치가 다시 대상이 된다.
+        if: ${{ github.event.inputs.skip_slack != 'true' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_CHANNEL_LABEL: '#test-delphi'
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+        run: python notify_tour_slack.py
