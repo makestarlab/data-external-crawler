@@ -34,9 +34,18 @@ import anthropic
 from google.cloud import bigquery
 
 from bq_common import PROJECT_ID, DATASET, get_bq_client
-# 로스터 해소 로직은 기존 것을 그대로 쓴다. entity_master 4단계 역색인 + 별칭 처리가
-# 이미 들어 있어서 다시 구현할 이유가 없다.
-from curate_events import load_entity_lookup, resolve_entity_id, chunked
+# 로스터 해소 로직과 응답 정규화는 기존 것을 그대로 쓴다.
+#   load_entity_lookup / resolve_entity_id : entity_master 4단계 역색인 + 별칭 처리
+#   _coerce_results : 모델이 results 를 규격대로 안 줄 때의 복구 로직.
+#     2026-08-13 / 08-24 에 curate_events 쪽에서 이미 겪은 변형들이 정리돼 있다.
+#     [2026-09-01] curate_tour 첫 실행이 'str' object has no attribute 'get' 로 죽었다.
+#     같은 변형인데 이 파일에서 재사용을 안 해서 그대로 다시 밟았다.
+from curate_events import (
+    load_entity_lookup,
+    resolve_entity_id,
+    chunked,
+    _coerce_results,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("curate_tour")
@@ -306,7 +315,14 @@ def call_claude(client, x_handle, artist_roster, tweets):
             )
             for block in resp.content:
                 if block.type == "tool_use":
-                    return block.input.get("results", []) or []
+                    raw = block.input.get("results", [])
+                    coerced = _coerce_results(raw, x_handle)
+                    if coerced is None:
+                        log.error("@%s: results 를 리스트로 복구하지 못했습니다 (type=%s) - "
+                                  "이 배치는 적재하지 않고 다음 실행에서 재시도됩니다",
+                                  x_handle, type(raw).__name__)
+                        return []
+                    return coerced
             log.warning("@%s: tool_use 블록이 없습니다 - 빈 결과로 처리", x_handle)
             return []
         except (anthropic.APIStatusError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
@@ -326,6 +342,13 @@ def call_claude(client, x_handle, artist_roster, tweets):
 def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at):
     rows = []
     for res in results:
+        if not isinstance(res, dict):
+            # _coerce_results 가 파싱을 시도한 뒤에도 문자열로 남은 항목. 여기서 죽으면
+            # 그 계정 배치 전체가 유실되므로, 해당 항목만 버리고 나머지는 살린다.
+            # 버린 트윗은 x_tour_announcements 에 안 들어가므로 다음 실행에서 자동 재시도된다.
+            log.warning("@%s: results 항목이 dict 가 아닙니다 (type=%s) - 이 항목만 건너뜁니다: %.120s",
+                        x_handle, type(res).__name__, str(res))
+            continue
         tid = str(res.get("tweet_id") or "")
         raw = raw_by_id.get(tid)
         if raw is None:
@@ -448,14 +471,23 @@ def main():
     run_date = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
     extracted_at = datetime.now(timezone.utc).isoformat()
 
-    all_rows, calls = [], 0
+    all_rows, calls, broken = [], 0, []
     for x_handle, tweets in by_handle.items():
-        raw_by_id = {t["tweet_id"]: t for t in tweets}
-        for batch in chunked(tweets, BATCH_SIZE):
-            results = call_claude(client, x_handle, artist_roster, batch)
-            calls += 1
-            all_rows.extend(build_rows(x_handle, raw_by_id, results,
-                                       name_to_id, run_date, extracted_at))
+        # 계정 단위로 예외를 가둔다.
+        # [2026-09-01] 한 계정에서 터진 예외가 main 까지 올라가면서, 그 앞에서 이미 Claude
+        # 호출을 마친 계정들의 결과까지 통째로 버려졌다. 토큰은 쓰고 남은 건 없는 상태.
+        # 한 계정이 실패해도 나머지는 적재하고, 실패한 계정은 안티조인 덕에 다음 실행에서
+        # 자동으로 다시 대상이 된다.
+        try:
+            raw_by_id = {t["tweet_id"]: t for t in tweets}
+            for batch in chunked(tweets, BATCH_SIZE):
+                results = call_claude(client, x_handle, artist_roster, batch)
+                calls += 1
+                all_rows.extend(build_rows(x_handle, raw_by_id, results,
+                                           name_to_id, run_date, extracted_at))
+        except Exception:
+            log.exception("@%s 처리 중 예외 - 이 계정만 건너뜁니다", x_handle)
+            broken.append(x_handle)
 
     load_rows(bq, all_rows)
 
@@ -476,6 +508,12 @@ def main():
         # 절반 넘게 확인 필요로 나오면 프롬프트나 로스터에 문제가 생긴 것이다.
         log.warning("확인 필요 비율이 %.0f%% 입니다 - 프롬프트/로스터 점검 필요",
                     review / len(relevant) * 100)
+
+    if broken:
+        # 적재는 이미 끝났으므로 성공분은 남는다. 그래도 워크플로는 실패로 띄워서
+        # 계정별 예외가 조용히 반복되지 않게 한다.
+        log.error("예외로 건너뛴 계정 %d개: %s", len(broken), ", ".join(broken))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
