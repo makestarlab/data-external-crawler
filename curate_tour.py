@@ -54,7 +54,10 @@ RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 TOUR_TABLE = f"{PROJECT_ID}.{DATASET}.x_tour_announcements"
 
 MODEL = os.environ.get("TOUR_CURATION_MODEL", "claude-sonnet-5")
-BATCH_SIZE = 25          # 한 번의 Claude 호출에 넣을 트윗 수
+BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
+#   [2026-09-01] 25 -> 12. 25건을 한 번에 주면 모델이 응답을 짧게 줄이려고 tweet_id 를
+#   순번이나 placeholder 로 대체하는 현상이 나왔다 (첫 백필에서 전량 유실).
+#   호출당 2~3초로 비정상적으로 빨랐던 것도 같은 징후다.
 LOOKBACK_DAYS = int(os.environ.get("TOUR_LOOKBACK_DAYS", "14"))
 CONFIDENCE_REVIEW_THRESHOLD = 0.75
 MAX_RETRIES = 4
@@ -100,7 +103,11 @@ TOOL_SCHEMA = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "tweet_id": {"type": "string"},
+                        "tweet_id": {
+                            "type": "string",
+                            "description": "입력 목록에 적힌 tweet_id 값을 문자 그대로 복사할 것. "
+                                           "순번(1,2,3)이나 placeholder 같은 값을 만들어 넣지 말 것.",
+                        },
                         "is_relevant": {
                             "type": "boolean",
                             "description": "<판정기준>의 is_relevant 조건에 해당하면 true. "
@@ -283,13 +290,64 @@ def parse_iso_date(s):
     return d.isoformat()
 
 
+
+def repair_tweet_ids(results, tweets, x_handle):
+    """모델이 tweet_id 를 원문 그대로 안 돌려줬을 때 되살린다.
+
+    [2026-09-01] 첫 백필에서 1,749건이 통째로 유실됐다. 모델이 tweet_id 자리에
+    'placeholder', '<UNKNOWN>', 그리고 '1','2','3' 같은 순번을 넣어 돌려줬고,
+    build_rows 의 "입력에 없는 tweet_id" 가드가 전부 걸러냈다.
+    프롬프트와 스키마를 고쳐 재발 확률은 낮췄지만, 모델 출력은 언제든 흔들릴 수 있으므로
+    복구 경로를 남긴다. 순서는 위험이 낮은 것부터다.
+
+      1) 이미 유효한 id      → 그대로 둔다
+      2) 1-based 순번        → 그 자리의 트윗 id 로 바꾼다 ('3' -> tweets[2])
+      3) 개수가 정확히 같음  → 위치로 매핑한다 (유효 id 가 하나도 없을 때만)
+
+    3)은 개수가 어긋나면 적용하지 않는다. 엉뚱한 트윗에 남의 공연 일정을 붙이는 것보다
+    그 배치를 버리고 다음 실행에서 다시 하는 편이 낫다.
+    """
+    if not results or not tweets:
+        return results, 0
+    valid = {str(t["tweet_id"]) for t in tweets}
+    order = [str(t["tweet_id"]) for t in tweets]
+
+    matched = sum(1 for r in results
+                  if isinstance(r, dict) and str(r.get("tweet_id") or "") in valid)
+    if matched == len(results):
+        return results, 0
+
+    repaired = 0
+    for i, r in enumerate(results):
+        if not isinstance(r, dict):
+            continue
+        tid = str(r.get("tweet_id") or "")
+        if tid in valid:
+            continue
+        if tid.isdigit() and 1 <= int(tid) <= len(order):
+            # 순번으로 판단. 실제 트윗 id 는 19자리라 한두 자리 숫자와 헷갈릴 일이 없다.
+            r["tweet_id"] = order[int(tid) - 1]
+            repaired += 1
+        elif matched == 0 and len(results) == len(tweets):
+            r["tweet_id"] = order[i]
+            repaired += 1
+    if repaired:
+        log.warning("@%s: 모델이 tweet_id 를 원문대로 안 줘서 %d건을 순서로 복구했습니다 "
+                    "(예: %.40s)", x_handle, repaired,
+                    str(results[0].get("tweet_id") if isinstance(results[0], dict) else ""))
+    return results, repaired
+
+
 def call_claude(client, x_handle, artist_roster, tweets):
     """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
+    # 포맷은 curate_events.call_claude 와 같은 형태로 맞춘다.
+    # [2026-09-01] 예전엔 "[tweet_id=123]" 대괄호 라벨이었는데, 모델이 이걸 식별자가 아니라
+    # 장식으로 보고 결과에는 순번을 매겨 돌려줬다. 필드처럼 "- tweet_id: 123 |" 로 주면 그대로 복사한다.
     lines = []
     for t in tweets:
         created = t["tweet_created_at"].isoformat() if t.get("tweet_created_at") else ""
         body = (t.get("tweet_text") or "").replace("\n", " / ")
-        lines.append(f"[tweet_id={t['tweet_id']}] (작성 {created})\n{body}")
+        lines.append(f"- tweet_id: {t['tweet_id']} | 작성일: {created}\n  본문: {body}")
     # load_entity_lookup 은 로스터를 "한글명 (영문명)" 줄바꿈 문자열로 돌려준다.
     # 그대로 넣으면 프롬프트가 길어져 캐시 미스가 늘고 오판도 늘어나므로 줄 수로 자른다.
     roster_hint = ""
@@ -299,8 +357,9 @@ def call_claude(client, x_handle, artist_roster, tweets):
             roster_hint = ("\n\n<등록된 아티스트명 목록 - artist_names 는 가급적 이 표기를 따를 것>\n"
                            + "\n".join(lines))
     user_msg = (f"계정: @{x_handle}\n"
-                f"아래 {len(tweets)}건의 트윗 각각에 대해 결과를 돌려주세요."
-                f"{roster_hint}\n\n" + "\n\n".join(lines))
+                f"아래 {len(tweets)}건의 트윗 각각에 대해 결과를 하나씩 돌려주세요.\n"
+                f"각 결과의 tweet_id 에는 아래 목록에 적힌 값을 그대로 복사해 넣으세요."
+                f"{roster_hint}\n\n분석할 포스팅 목록:\n" + "\n".join(lines))
 
     delay = 2
     for attempt in range(1, MAX_RETRIES + 1):
@@ -322,6 +381,7 @@ def call_claude(client, x_handle, artist_roster, tweets):
                                   "이 배치는 적재하지 않고 다음 실행에서 재시도됩니다",
                                   x_handle, type(raw).__name__)
                         return []
+                    coerced, _ = repair_tweet_ids(coerced, tweets, x_handle)
                     return coerced
             log.warning("@%s: tool_use 블록이 없습니다 - 빈 결과로 처리", x_handle)
             return []
@@ -471,7 +531,7 @@ def main():
     run_date = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
     extracted_at = datetime.now(timezone.utc).isoformat()
 
-    all_rows, calls, broken = [], 0, []
+    all_rows, calls, broken, dropped = [], 0, [], 0
     for x_handle, tweets in by_handle.items():
         # 계정 단위로 예외를 가둔다.
         # [2026-09-01] 한 계정에서 터진 예외가 main 까지 올라가면서, 그 앞에서 이미 Claude
@@ -485,6 +545,9 @@ def main():
                 calls += 1
                 all_rows.extend(build_rows(x_handle, raw_by_id, results,
                                            name_to_id, run_date, extracted_at))
+                dropped += max(0, len(batch) - sum(1 for r in results
+                               if isinstance(r, dict)
+                               and str(r.get("tweet_id") or "") in {str(t["tweet_id"]) for t in batch}))
         except Exception:
             log.exception("@%s 처리 중 예외 - 이 계정만 건너뜁니다", x_handle)
             broken.append(x_handle)
@@ -495,8 +558,14 @@ def main():
     shows = sum(len(r["shows"]) for r in relevant)
     dated = sum(1 for r in relevant for s in r["shows"] if s["event_date"])
     review = sum(1 for r in relevant if r["needs_review"])
-    log.info("Claude 호출 %d회 | 입력 %d건 -> 투어 공지 %d건 | 회차 %d개(날짜 확정 %d) | 확인 필요 %d건",
-             calls, total_in, len(relevant), shows, dated, review)
+    log.info("Claude 호출 %d회 | 입력 %d건 -> 결과 %d행 (투어 공지 %d건) | 회차 %d개(날짜 확정 %d) | 확인 필요 %d건",
+             calls, total_in, len(all_rows), len(relevant), shows, dated, review)
+
+    # [2026-09-01] tweet_id 불일치로 통째로 유실됐던 사고를 다시 조용히 넘기지 않는다.
+    if total_in and len(all_rows) < total_in * 0.5:
+        log.error("입력 %d건 중 %d행만 남았습니다 (유실 %d건). 모델이 tweet_id 를 "
+                  "원문대로 안 돌려주고 있을 수 있습니다 - 로그의 '입력에 없는 tweet_id' 경고 확인",
+                  total_in, len(all_rows), dropped)
 
     kinds = defaultdict(int)
     for r in relevant:

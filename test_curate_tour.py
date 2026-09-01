@@ -139,6 +139,44 @@ for text, want, label in samples:
     got = bool(pat.search(text.lower()))
     check(got == want, f"{label}: {'통과' if got else '차단'}")
 
+
+
+print("\n[tweet_id 복구 - 2026-09-01 백필 전량 유실 재현]")
+# 실제 로그: 모델이 tweet_id 자리에 'placeholder' / '<UNKNOWN>' / '1','2','3' 을 넣어 돌려줬고
+# build_rows 가드가 1,749건을 전부 걸러 0행이 됐다.
+batch = [{"tweet_id": "1990000000000000001"}, {"tweet_id": "1990000000000000002"},
+         {"tweet_id": "1990000000000000003"}]
+
+seq = [{"tweet_id": "1"}, {"tweet_id": "2"}, {"tweet_id": "3"}]
+fixed, n = ct.repair_tweet_ids(seq, batch, "h")
+check(n == 3 and [r["tweet_id"] for r in fixed] == [t["tweet_id"] for t in batch],
+      "1-based 순번을 실제 tweet_id 로 복구")
+
+ph = [{"tweet_id": "placeholder"}, {"tweet_id": "<UNKNOWN>"}, {"tweet_id": "placeholder"}]
+fixed, n = ct.repair_tweet_ids(ph, batch, "h")
+check(n == 3 and [r["tweet_id"] for r in fixed] == [t["tweet_id"] for t in batch],
+      "placeholder/<UNKNOWN> 는 개수가 같을 때 위치로 복구")
+
+short = [{"tweet_id": "placeholder"}, {"tweet_id": "placeholder"}]
+fixed, n = ct.repair_tweet_ids(short, batch, "h")
+check(n == 0, "개수가 어긋나면 위치 매핑 안 함 (엉뚱한 트윗에 붙이느니 버린다)")
+
+ok = [{"tweet_id": "1990000000000000002"}]
+fixed, n = ct.repair_tweet_ids(ok, batch, "h")
+check(n == 0 and fixed[0]["tweet_id"] == "1990000000000000002", "정상 id 는 건드리지 않음")
+
+mixed2 = [{"tweet_id": "1990000000000000001"}, {"tweet_id": "2"}, {"tweet_id": "placeholder"}]
+fixed, n = ct.repair_tweet_ids(mixed2, batch, "h")
+check(fixed[1]["tweet_id"] == batch[1]["tweet_id"], "정상 id 가 섞여 있어도 순번은 복구")
+check(fixed[2]["tweet_id"] == "placeholder",
+      "유효 id 가 하나라도 있으면 placeholder 는 위치 매핑 안 함 (근거 부족)")
+
+print("\n[프롬프트 포맷 - 모델이 tweet_id 를 필드로 인식하도록]")
+tid_field = ct.TOOL_SCHEMA["input_schema"]["properties"]["results"]["items"]["properties"]["tweet_id"]
+check("그대로 복사" in tid_field.get("description", ""), "스키마에 원문 복사 지시가 있음")
+check(ct.BATCH_SIZE <= 15, f"배치 크기가 15 이하 (현재 {ct.BATCH_SIZE})")
+
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")
