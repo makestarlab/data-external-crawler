@@ -347,8 +347,30 @@ AttributeError: 'str' object has no attribute 'get'
 | iKON | `iKONIC_143` | 팬 커뮤니티 성격이 섞여 있음 |
 | Heechul | `HeeZZinPaang` | 과거 계정 폐쇄·재개설 이력 |
 
-**첫 크롤 실행이 검증이다.** `x_crawl_state.last_run_status` 가 `ERROR` 면 핸들이 아예
-틀린 것이고, 정상이면 `x_posts_raw` 본문을 눈으로 보고 `confirmation_status` 를 올린다.
+**핸들 검증은 `last_run_status` 가 아니라 팔로워 수로 한다.**
+
+2026-09-01 첫 크롤에서 30계정 전부 `SUCCESS` 였지만, 그중 3개가 틀린 계정이었다.
+계정이 존재하기만 하면 `SUCCESS` 다. 실제 판별은 팔로워 수가 한다 — 투어를 도는
+아티스트의 공식 계정이 팔로워 수천 명일 수는 없다.
+
+| 핸들 | 아티스트 | 팔로워 | 실제 |
+|---|---|---|---|
+| `G_I_DLE` | (G)I-DLE | 0 | 팀명을 i-dle 로 바꾸며 `official_i_dle` 로 이전 |
+| `TAEMIN_BPM` | TAEMIN | 39 | 활동 공지는 `Taemin_Xoalsox_` 에서 나온다 |
+| `HeeZZinPaang` | Heechul | 3,750 | 계정명은 맞으나 규모 불일치. `SJofficial` 로 대체 |
+
+반대로 `UNCERTAIN` 으로 넣었던 iKON `iKONIC_143`(114만), XG `XGOfficial_`(56만),
+WOODZ `c_woodzofficial`(40만) 은 팔로워 수로 공식임이 확인됐다.
+
+신인 그룹의 낮은 팔로워는 정상이다 (YOUNG POSSE 33K · WHIB 45K · AMPERS&ONE 49K).
+숫자만 보지 말고 **아티스트 인지도 대비**로 판단할 것.
+
+이 판정을 `v_roster_health` 뷰로 만들어 뒀다. 크롤 실행 후 한 번 보면 된다.
+
+```sql
+SELECT * FROM `makestar-dw.makestar_ax.v_roster_health`
+WHERE health <> 'OK' ORDER BY followers
+```
 
 계정을 추가할 때는 `x_crawl_targets.json` 과 `entity_master` **두 곳을 반드시 함께**
 갱신한다 (2026-08-07 `x_crawl_state` MERGE 버그가 이 누락에서 나왔다).
