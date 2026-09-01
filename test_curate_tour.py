@@ -177,6 +177,36 @@ check("그대로 복사" in tid_field.get("description", ""), "스키마에 원�
 check(ct.BATCH_SIZE <= 15, f"배치 크기가 15 이하 (현재 {ct.BATCH_SIZE})")
 
 
+print("\n[사용자 메시지 조립 - 2026-09-01 변수 섀도잉 사고 재현]")
+# 실제 사고: 트윗 목록을 담은 지역변수를 로스터로 덮어써서 메시지에 본문이 한 건도
+# 안 들어갔다. 모델은 "트윗 본문 없이 아티스트명만 제공되어 판단 불가" 라고 답했고
+# 1,749건이 통째로 날아갔다. 조립 결과에 본문이 있는지를 여기서 못 박는다.
+from datetime import datetime as _dt, timezone as _tz
+msg_tweets = [
+  {"tweet_id": "1990000000000000001",
+   "tweet_created_at": _dt(2026, 8, 24, 9, 0, tzinfo=_tz.utc),
+   "tweet_text": "Stray Kids World Tour <RUN IT BANGKOK>\n2027.01.16 @ Impact Arena"},
+  {"tweet_id": "1990000000000000002",
+   "tweet_created_at": _dt(2026, 8, 25, 9, 0, tzinfo=_tz.utc),
+   "tweet_text": "Tickets Open Now!"},
+]
+msg = ct.build_user_message("Stray_Kids", "Stray Kids", msg_tweets)
+print(msg[:300].replace("\n", " ⏎ "))
+
+for t in msg_tweets:
+    check(t["tweet_id"] in msg, f"메시지에 tweet_id {t['tweet_id'][-4:]} 포함")
+check("Impact Arena" in msg, "메시지에 트윗 본문이 실제로 들어감 (이게 빠져서 사고가 났다)")
+check("Tickets Open Now!" in msg, "두 번째 트윗 본문도 포함")
+check(msg.count("- tweet_id:") == 2, "포스팅 줄이 트윗 수만큼 있음")
+check(msg.rstrip().endswith("Tickets Open Now!"), "포스팅 목록이 메시지 맨 끝에 위치")
+check("분석할 신규 포스팅 목록:" in msg, "목록 헤더가 명시됨")
+check("Stray Kids 본인의 공식 계정" in msg, "계정 주인 이름이 문맥으로 들어감")
+check(len(msg) < 4000, f"로스터를 안 넣어 메시지가 짧음 ({len(msg)}자)")
+
+empty = ct.build_user_message("h", None, msg_tweets)
+check("Impact Arena" in empty, "아티스트명을 몰라도 본문은 들어감")
+
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")
