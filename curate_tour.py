@@ -59,7 +59,13 @@ BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
 #   순번이나 placeholder 로 대체하는 현상이 나왔다 (첫 백필에서 전량 유실).
 #   호출당 2~3초로 비정상적으로 빨랐던 것도 같은 징후다.
 LOOKBACK_DAYS = int(os.environ.get("TOUR_LOOKBACK_DAYS", "14"))
-CONFIDENCE_REVIEW_THRESHOLD = 0.75
+CONFIDENCE_REVIEW_THRESHOLD = float(os.environ.get("TOUR_CONF_THRESHOLD", "0.5"))
+#   [2026-09-02] 0.75 -> 0.5. 30일치 82건의 confidence 분포를 보고 정했다.
+#     0.90+      25건 - 전 회차 날짜·도시·베뉴 완비
+#     0.70~0.79  17건 - 날짜·도시는 완비, 베뉴만 없음(14/17). 정상 상태다
+#     0.50~0.59  14건 - 전 회차 날짜가 있는 건 1건뿐. 여기서부터 실제로 부실하다
+#   0.75 로 자르면 0.70~0.79 의 멀쩡한 17건이 통째로 확인 큐로 갔다.
+#   확신도는 보조 신호로만 쓰고, 판정은 아래 "내용 기준" 규칙이 한다.
 MAX_RETRIES = 4
 FLUSH_EVERY = int(os.environ.get("TOUR_FLUSH_EVERY", "40"))
 #   [2026-09-02] 적재를 루프 끝에 한 번만 하던 구조에서 90일 백필을 중간에 취소했더니
@@ -541,8 +547,12 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
         #   7일치 실측에서 확인 필요 25건 중 13건이 이 규칙의 오탐이었다(비율 66%).
         if kind in ("NEW_CITY", "SHOW_INFO") and not any(s["event_date"] for s in shows):
             reasons.append("일정 공지인데 확정 날짜 없음")
-        if kind == "SHOW_INFO" and any(not s.get("venue_name") for s in shows):
-            reasons.append("SHOW_INFO 인데 공연장 결측")
+        # [2026-09-02] "공연장 결측" 을 확인 필요에서 뺐다.
+        #   노션에 적힌 그대로 "투어 발표가 공연장 확정보다 먼저" 인 경우가 정상적으로 많다.
+        #   30일치 실측에서 확인 필요 49건 중 29건이 이 사유였고, 그중 대부분은 날짜·도시가
+        #   멀쩡히 잡힌 건이었다. 사람이 손댈 게 없는 걸 큐에 쌓으면 큐를 안 보게 된다.
+        #   베뉴 미정 회차는 v_tour_venue_pending 뷰로 따로 관리한다 - 나중에 Ticketmaster
+        #   조회나 후속 공지로 채우는 대상이지, 지금 사람이 확인할 대상이 아니다.
         # 도시 결측도 회차가 실제로 잡힌 공지에만 따진다. 투어 발표 단계에서는 당연히 없다.
         if kind in ("NEW_CITY", "SHOW_INFO") and any(not s.get("city") for s in shows):
             reasons.append("도시 결측")

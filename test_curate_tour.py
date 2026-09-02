@@ -93,7 +93,8 @@ ex2 = [{"tweet_id": "2", "is_relevant": True, "announcement_kind": "NEW_TOUR",
         "tour_name": "SOME TOUR", "event_type": "콘서트/투어", "artist_names": ["듣보그룹"],
         "shows": [{"event_date": None, "date_text": None, "city": None,
                    "country": None, "venue_name": None}],
-        "ticket_opens": [], "confidence": 0.5, "note": "일정 미공개"}]
+        "ticket_opens": [], "confidence": 0.3, "note": "일정 미공개"}]
+# confidence 0.3: 문턱(0.5) 아래. 문턱을 바꾸면 이 값도 같이 봐야 한다.
 r2 = ct.build_rows("someartist", raw2, ex2, name_to_id, "2026-09-01", "2026-09-01T00:00:00Z")[0]
 check(r2["needs_review"] is True, "결측 공지는 확인 큐로 감")
 check("entity_master 매칭 실패" in r2["review_reason"], "로스터 미등록이 사유에 남음")
@@ -250,6 +251,37 @@ check(ok["shows"][0]["country"] == "KOREA", "build_rows 가 국가를 정규화"
 print("\n[증분 적재 설정]")
 check(ct.FLUSH_EVERY > 0, f"FLUSH_EVERY 설정됨 ({ct.FLUSH_EVERY}행마다 적재)")
 check(ct.MAX_MINUTES < 180, f"MAX_MINUTES({ct.MAX_MINUTES})가 러너 타임아웃(180분)보다 작음")
+
+
+print("\n[확인 필요 판정 - 2026-09-02 30일치 실측 반영]")
+def _r(kind, shows, conf=0.9):
+    rr = [{"tweet_id": "1", "is_relevant": True, "announcement_kind": kind, "tour_name": "T",
+           "event_type": "콘서트/투어", "artist_names": ["Stray Kids"], "shows": shows,
+           "ticket_opens": [], "confidence": conf, "note": ""}]
+    return ct.build_rows("Stray_Kids", raw, rr, name_to_id, "2026-09-02", "2026-09-02T00:00:00Z")[0]
+
+no_venue = [{"event_date": "2027-01-16", "date_text": "", "city": "Bangkok",
+             "country": "THAILAND", "venue_name": None}]
+r = _r("SHOW_INFO", no_venue, 0.75)
+check(r["needs_review"] is False,
+      "일자·도시는 있고 베뉴만 없으면 통과 (투어 발표가 공연장 확정보다 먼저인 정상 케이스)")
+
+r2 = _r("SHOW_INFO", no_venue, 0.45)
+check(r2["needs_review"] is True, "confidence 0.45 는 확인 큐로")
+check("confidence" in r2["review_reason"], "사유에 confidence 기록")
+
+r3 = _r("SHOW_INFO", no_venue, 0.55)
+check(r3["needs_review"] is False, f"confidence 0.55 는 통과 (문턱 {ct.CONFIDENCE_REVIEW_THRESHOLD})")
+
+no_city = [{"event_date": "2027-01-16", "date_text": "", "city": None,
+            "country": None, "venue_name": "Impact Arena"}]
+check(_r("SHOW_INFO", no_city)["needs_review"] is True, "도시 결측은 여전히 확인 큐로")
+
+no_date2 = [{"event_date": None, "date_text": "TBA", "city": "Bangkok",
+             "country": "THAILAND", "venue_name": None}]
+check(_r("SHOW_INFO", no_date2)["needs_review"] is True, "날짜 결측은 여전히 확인 큐로")
+check(ct.CONFIDENCE_REVIEW_THRESHOLD <= 0.6,
+      f"confidence 문턱이 0.6 이하 (현재 {ct.CONFIDENCE_REVIEW_THRESHOLD})")
 
 
 print()
