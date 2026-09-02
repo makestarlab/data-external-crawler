@@ -61,6 +61,13 @@ BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
 LOOKBACK_DAYS = int(os.environ.get("TOUR_LOOKBACK_DAYS", "14"))
 CONFIDENCE_REVIEW_THRESHOLD = 0.75
 MAX_RETRIES = 4
+FLUSH_EVERY = int(os.environ.get("TOUR_FLUSH_EVERY", "40"))
+#   [2026-09-02] 적재를 루프 끝에 한 번만 하던 구조에서 90일 백필을 중간에 취소했더니
+#   그때까지의 74회 호출분이 통째로 사라졌다. 토큰만 쓰고 남은 게 없었다.
+#   이제 누적 행이 이 개수를 넘기면 중간 적재한다. 적재분은 안티조인에 걸려 재처리도 안 된다.
+MAX_MINUTES = int(os.environ.get("TOUR_MAX_MINUTES", "150"))
+#   러너 타임아웃(180분)보다 먼저 스스로 멈추고 남은 결과를 적재한 뒤 나간다.
+#   러너가 죽이면 적재 기회 자체가 없다.
 
 # ---------------------------------------------------------------------------
 # 프리필터
@@ -262,6 +269,61 @@ def detect_vendor(urls, tweet_text):
     return None
 
 
+COUNTRY_ALIASES = {
+    # 시트('글로벌 투어 현황')의 국가 표기에 맞춘다. 모델이 뭐라 쓰든 한 형태로 모은다.
+    "SOUTH KOREA": "KOREA", "REPUBLIC OF KOREA": "KOREA", "KOREA, REPUBLIC OF": "KOREA",
+    "S. KOREA": "KOREA", "대한민국": "KOREA", "한국": "KOREA",
+    "UNITED STATES": "USA", "UNITED STATES OF AMERICA": "USA", "U.S.A.": "USA",
+    "U.S.": "USA", "US": "USA", "미국": "USA",
+    "UK": "UNITED KINGDOM", "ENGLAND": "UNITED KINGDOM", "SCOTLAND": "UNITED KINGDOM",
+    "GREAT BRITAIN": "UNITED KINGDOM", "영국": "UNITED KINGDOM",
+    "UNITED ARAB EMIRATES": "UAE", "ARAB EMIRATES": "UAE", "CZECH REPUBLIC": "CZECHIA",
+    "일본": "JAPAN", "대만": "TAIWAN", "중국": "CHINA", "홍콩": "HONG KONG",
+    "마카오": "MACAU", "태국": "THAILAND", "싱가포르": "SINGAPORE",
+    "필리핀": "PHILIPPINES", "말레이시아": "MALAYSIA", "인도네시아": "INDONESIA",
+    "베트남": "VIETNAM", "호주": "AUSTRALIA", "캐나다": "CANADA", "멕시코": "MEXICO",
+    "브라질": "BRAZIL", "프랑스": "FRANCE", "독일": "GERMANY", "스페인": "SPAIN",
+}
+
+CITY_ALIASES = {
+    # 같은 공지가 한국어판/영어판으로 두 번 올라오면 도시 표기가 갈려 show_key 가 쪼개진다.
+    # 실제로 NCT 전시 공지가 '서울' / 'Seoul' 두 행으로 남았다. 영문 한 형태로 모은다.
+    "서울": "Seoul", "인천": "Incheon", "부산": "Busan", "고양": "Goyang",
+    "대구": "Daegu", "광주": "Gwangju", "대전": "Daejeon", "수원": "Suwon",
+    "도쿄": "Tokyo", "동경": "Tokyo", "오사카": "Osaka", "요코하마": "Yokohama",
+    "나고야": "Nagoya", "후쿠오카": "Fukuoka", "삿포로": "Sapporo", "고베": "Kobe",
+    "사이타마": "Saitama", "지바": "Chiba", "가나가와": "Kanagawa",
+    "타이베이": "Taipei", "타이페이": "Taipei", "가오슝": "Kaohsiung",
+    "홍콩": "Hong Kong", "마카오": "Macau", "상하이": "Shanghai", "베이징": "Beijing",
+    "청두": "Chengdu", "창사": "Changsha", "광저우": "Guangzhou", "선전": "Shenzhen",
+    "방콕": "Bangkok", "싱가포르": "Singapore", "자카르타": "Jakarta",
+    "마닐라": "Manila", "쿠알라룸푸르": "Kuala Lumpur", "호치민": "Ho Chi Minh City",
+}
+
+
+def normalize_country(v):
+    if not v:
+        return None
+    k = re.sub(r"\s+", " ", str(v).strip()).upper()
+    return COUNTRY_ALIASES.get(k, k) or None
+
+
+def normalize_city(v):
+    """도시명을 영문 한 형태로 모은다. 매핑에 없으면 앞뒤 공백만 정리해 원문을 유지한다
+    (모르는 도시를 억지로 바꾸는 것보다 원문이 낫다)."""
+    if not v:
+        return None
+    raw = re.sub(r"\s+", " ", str(v).strip())
+    if not raw:
+        return None
+    for cand in (raw,
+                 re.sub(r"(시|특별시|광역시)$", "", raw).strip(),
+                 raw.split(",")[0].strip()):
+        if cand in CITY_ALIASES:
+            return CITY_ALIASES[cand]
+    return raw
+
+
 def norm_token(s):
     return re.sub(r"[^a-z0-9가-힣]+", "", (s or "").lower())
 
@@ -454,12 +516,15 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
             iso = parse_iso_date(s.get("event_date"))
             if s.get("event_date") and iso is None:
                 dropped_dates += 1
+            # 도시·국가는 여기서 정규화한다. show_key 도 정규화된 도시로 만들어야
+            # 한국어판/영어판 공지가 같은 공연으로 묶인다.
+            city = normalize_city(s.get("city"))
             shows.append({
-                "show_key": make_show_key(primary_artist, iso, s.get("city")),
+                "show_key": make_show_key(primary_artist, iso, city),
                 "event_date": iso,
                 "date_text": s.get("date_text"),
-                "city": s.get("city"),
-                "country": (s.get("country") or "").upper().strip() or None,
+                "city": city,
+                "country": normalize_country(s.get("country")),
                 "venue_name": s.get("venue_name"),
             })
 
@@ -470,11 +535,16 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
         kind = res.get("announcement_kind")
         if conf is not None and conf < CONFIDENCE_REVIEW_THRESHOLD:
             reasons.append(f"confidence {conf:.2f} < {CONFIDENCE_REVIEW_THRESHOLD}")
-        if kind in ("NEW_TOUR", "NEW_CITY", "SHOW_INFO") and not any(s["event_date"] for s in shows):
+        # [2026-09-02] NEW_TOUR / TICKET_OPEN 을 이 규칙에서 뺐다.
+        #   NEW_TOUR 는 "월드투어 갑니다, 도시는 추후 공개" 형태라 날짜가 없는 게 정상이고,
+        #   TICKET_OPEN 은 이미 발표된 공연의 예매 안내라 본문에 날짜가 없을 수 있다.
+        #   7일치 실측에서 확인 필요 25건 중 13건이 이 규칙의 오탐이었다(비율 66%).
+        if kind in ("NEW_CITY", "SHOW_INFO") and not any(s["event_date"] for s in shows):
             reasons.append("일정 공지인데 확정 날짜 없음")
         if kind == "SHOW_INFO" and any(not s.get("venue_name") for s in shows):
             reasons.append("SHOW_INFO 인데 공연장 결측")
-        if any(not s.get("city") for s in shows):
+        # 도시 결측도 회차가 실제로 잡힌 공지에만 따진다. 투어 발표 단계에서는 당연히 없다.
+        if kind in ("NEW_CITY", "SHOW_INFO") and any(not s.get("city") for s in shows):
             reasons.append("도시 결측")
         if not entity_ids:
             # 조용한 NULL 이 커버리지를 갉아먹는 지점. 반드시 사람이 보게 만든다.
@@ -536,6 +606,10 @@ def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     name_to_id, id_to_name, _artist_roster = load_entity_lookup(bq)
+    # entity_id -> 영문명. load_entity_lookup 이 안 돌려주므로 따로 읽는다.
+    name_en_by_id = {r["entity_id"]: r["name_en"] for r in bq.query(
+        f"SELECT entity_id, name_en FROM `{PROJECT_ID}.{DATASET}.entity_master` "
+        f"WHERE entity_type='ARTIST' AND name_en IS NOT NULL AND name_en != ''").result()}
     by_handle = fetch_candidate_posts(bq)
     if not by_handle:
         log.info("투어 큐레이션할 신규 포스팅 없음")
@@ -549,7 +623,26 @@ def main():
     extracted_at = datetime.now(timezone.utc).isoformat()
 
     all_rows, calls, broken, dropped = [], 0, [], 0
+    pending, loaded = [], 0
+    started_at = time.monotonic()
+    stopped_early = None
+
+    def flush():
+        """모아둔 행을 적재하고 버퍼를 비운다. 중간에 죽어도 여기까지는 남는다."""
+        nonlocal pending, loaded
+        if pending:
+            load_rows(bq, pending)
+            loaded += len(pending)
+            pending = []
+
     for x_handle, tweets in by_handle.items():
+        # 러너가 죽이기 전에 스스로 멈춘다. 죽으면 적재 기회 자체가 없다.
+        elapsed_min = (time.monotonic() - started_at) / 60
+        if elapsed_min > MAX_MINUTES:
+            stopped_early = (elapsed_min, len(by_handle))
+            log.warning("경과 %.0f분으로 상한(%d분)에 도달 - 남은 계정은 다음 실행으로 넘깁니다",
+                        elapsed_min, MAX_MINUTES)
+            break
         # 계정 단위로 예외를 가둔다.
         # [2026-09-01] 한 계정에서 터진 예외가 main 까지 올라가면서, 그 앞에서 이미 Claude
         # 호출을 마친 계정들의 결과까지 통째로 버려졌다. 토큰은 쓰고 남은 건 없는 상태.
@@ -559,7 +652,10 @@ def main():
             raw_by_id = {t["tweet_id"]: t for t in tweets}
             # 이 계정의 주인 이름. 로스터 전체 대신 이 한 줄만 프롬프트에 넣는다.
             owner_entity = next((t.get("entity_id") for t in tweets if t.get("entity_id")), None)
-            known_artist_name = id_to_name.get(owner_entity) if owner_entity else None
+            # 시트('글로벌 투어 현황')의 IP 컬럼이 영문 표기라 영문명을 우선한다.
+            # id_to_name 은 한글명을 돌려줘서 그대로 쓰면 '스트레이 키즈' 같은 값이 들어간다.
+            known_artist_name = (name_en_by_id.get(owner_entity) or id_to_name.get(owner_entity)
+                                 if owner_entity else None)
             for batch in chunked(tweets, BATCH_SIZE):
                 results = call_claude(client, x_handle, known_artist_name, batch)
                 calls += 1
@@ -571,18 +667,28 @@ def main():
         except Exception:
             log.exception("@%s 처리 중 예외 - 이 계정만 건너뜁니다", x_handle)
             broken.append(x_handle)
+        # 계정 하나가 끝날 때마다 버퍼를 보고, 찼으면 적재한다.
+        # 계정 중간에 자르지 않는 이유는 한 계정의 결과가 두 적재로 쪼개져도 얻는 게 없어서다.
+        if len(all_rows) - loaded >= FLUSH_EVERY:
+            pending = all_rows[loaded:]
+            flush()
 
-    load_rows(bq, all_rows)
+    pending = all_rows[loaded:]
+    flush()
 
     relevant = [r for r in all_rows if r["is_relevant"]]
     shows = sum(len(r["shows"]) for r in relevant)
     dated = sum(1 for r in relevant for s in r["shows"] if s["event_date"])
     review = sum(1 for r in relevant if r["needs_review"])
-    log.info("Claude 호출 %d회 | 입력 %d건 -> 결과 %d행 (투어 공지 %d건) | 회차 %d개(날짜 확정 %d) | 확인 필요 %d건",
-             calls, total_in, len(all_rows), len(relevant), shows, dated, review)
+    log.info("Claude 호출 %d회 | 입력 %d건 -> 결과 %d행(적재 %d) (투어 공지 %d건) | "
+             "회차 %d개(날짜 확정 %d) | 확인 필요 %d건",
+             calls, total_in, len(all_rows), loaded, len(relevant), shows, dated, review)
+    if stopped_early:
+        log.warning("시간 상한으로 조기 종료했습니다. 남은 계정은 안티조인 덕에 "
+                    "다음 실행에서 자동으로 다시 대상이 됩니다")
 
     # [2026-09-01] tweet_id 불일치로 통째로 유실됐던 사고를 다시 조용히 넘기지 않는다.
-    if total_in and len(all_rows) < total_in * 0.5:
+    if total_in and not stopped_early and len(all_rows) < total_in * 0.5:
         log.error("입력 %d건 중 %d행만 남았습니다 (유실 %d건). 모델이 tweet_id 를 "
                   "원문대로 안 돌려주고 있을 수 있습니다 - 로그의 '입력에 없는 tweet_id' 경고 확인",
                   total_in, len(all_rows), dropped)

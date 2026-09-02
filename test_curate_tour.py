@@ -207,6 +207,51 @@ empty = ct.build_user_message("h", None, msg_tweets)
 check("Impact Arena" in empty, "아티스트명을 몰라도 본문은 들어감")
 
 
+print("\n[국가·도시 정규화 - 2026-09-02 실측에서 나온 흔들림]")
+check(ct.normalize_country("South Korea") == "KOREA", "SOUTH KOREA -> KOREA (시트 표기)")
+check(ct.normalize_country("대한민국") == "KOREA", "한글 국가명 -> 영문")
+check(ct.normalize_country("United States") == "USA", "UNITED STATES -> USA")
+check(ct.normalize_country("England") == "UNITED KINGDOM", "ENGLAND -> UNITED KINGDOM")
+check(ct.normalize_country("Peru") == "PERU", "매핑에 없으면 대문자만 적용")
+check(ct.normalize_country(None) is None, "None 처리")
+check(ct.normalize_city("서울") == "Seoul", "서울 -> Seoul")
+check(ct.normalize_city("서울특별시") == "Seoul", "접미사 붙은 형태도 처리")
+check(ct.normalize_city("청두") == "Chengdu", "청두 -> Chengdu")
+check(ct.normalize_city("Belmont Park") == "Belmont Park", "모르는 도시는 원문 유지")
+
+print("\n[한국어판/영어판 공지가 같은 공연으로 묶이는가]")
+ko = ct.make_show_key("NCT", "2026-09-18", ct.normalize_city("서울"))
+en = ct.make_show_key("NCT", "2026-09-18", ct.normalize_city("Seoul"))
+check(ko == en, "서울/Seoul 이 같은 show_key (전에는 두 행으로 갈렸다)")
+
+print("\n[확인 필요 판정 완화]")
+def _rows(kind, shows, conf=0.9):
+    r = [{"tweet_id": "1", "is_relevant": True, "announcement_kind": kind,
+          "tour_name": "T", "event_type": "콘서트/투어", "artist_names": ["Stray Kids"],
+          "shows": shows, "ticket_opens": [], "confidence": conf, "note": ""}]
+    return ct.build_rows("Stray_Kids", raw, r, name_to_id, "2026-09-02", "2026-09-02T00:00:00Z")[0]
+
+no_date = [{"event_date": None, "date_text": "TBA", "city": None, "country": None, "venue_name": None}]
+check(_rows("NEW_TOUR", no_date)["needs_review"] is False,
+      "NEW_TOUR 는 날짜 없어도 확인 큐로 안 감 (투어 발표는 원래 미정)")
+check(_rows("TICKET_OPEN", no_date)["needs_review"] is False,
+      "TICKET_OPEN 도 날짜 없어도 통과 (이미 발표된 공연의 예매 안내)")
+r_ni = _rows("NEW_CITY", no_date)
+check(r_ni["needs_review"] is True, "NEW_CITY 는 날짜 없으면 확인 큐로")
+check("일정 공지인데 확정 날짜 없음" in r_ni["review_reason"], "사유가 기록됨")
+
+full = [{"event_date": "2027-01-16", "date_text": "", "city": "서울",
+         "country": "south korea", "venue_name": "KSPO DOME"}]
+ok = _rows("SHOW_INFO", full)
+check(ok["needs_review"] is False, "완전한 SHOW_INFO 는 통과")
+check(ok["shows"][0]["city"] == "Seoul", "build_rows 가 도시를 정규화")
+check(ok["shows"][0]["country"] == "KOREA", "build_rows 가 국가를 정규화")
+
+print("\n[증분 적재 설정]")
+check(ct.FLUSH_EVERY > 0, f"FLUSH_EVERY 설정됨 ({ct.FLUSH_EVERY}행마다 적재)")
+check(ct.MAX_MINUTES < 180, f"MAX_MINUTES({ct.MAX_MINUTES})가 러너 타임아웃(180분)보다 작음")
+
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")
