@@ -167,7 +167,10 @@ def post_to_slack(blocks, fallback):
         print(json.dumps(blocks, ensure_ascii=False, indent=2))
         return True, None
 
-    webhook = os.environ.get("SLACK_WEBHOOK_URL")
+    # .strip() 이 붙은 이유: 깃허브 시크릿에 값을 붙여넣을 때 끝에 줄바꿈이 딸려
+    # 들어가는 일이 잦다. 값이 안 보이니 육안으로 못 잡고, 슬랙은 이걸 invalid_auth
+    # 로만 돌려줘서 "토큰이 틀렸다" 로 오진하게 된다. (2026-09-02 실제로 겪음)
+    webhook = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     if webhook:
         r = requests.post(webhook, json={"text": fallback, "blocks": blocks}, timeout=15)
         # Webhook 은 성공 시 본문이 "ok" 인 200 을 준다. 실패해도 200 을 주는 경우가 있어
@@ -175,8 +178,8 @@ def post_to_slack(blocks, fallback):
         ok = r.status_code == 200 and r.text.strip() == "ok"
         return ok, None if ok else f"HTTP {r.status_code} {r.text[:200]}"
 
-    token = os.environ.get("SLACK_BOT_TOKEN")
-    channel = os.environ.get("SLACK_CHANNEL_ID")
+    token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    channel = os.environ.get("SLACK_CHANNEL_ID", "").strip()
     if not token or not channel:
         raise RuntimeError("SLACK_WEBHOOK_URL 또는 (SLACK_BOT_TOKEN + SLACK_CHANNEL_ID) 가 필요합니다")
     r = requests.post(
@@ -205,7 +208,26 @@ def record_sent(bq, records):
         raise RuntimeError(f"BigQuery 로드 잡 오류: {job.errors}")
 
 
+def log_auth_shape():
+    """토큰 값을 노출하지 않고 '어떤 모양인지' 만 남긴다.
+
+    2026-09-02 에 invalid_auth 로 9건이 통째로 실패했는데, 로컬 토큰은 멀쩡해서
+    원인을 찾는 데 시간을 썼다. 깃허브 시크릿은 값이 안 보이니 접두사와 길이만
+    찍어두면 다음엔 로그 한 줄로 끝난다.
+    """
+    for name in ("SLACK_WEBHOOK_URL", "SLACK_BOT_TOKEN", "SLACK_CHANNEL_ID"):
+        raw = os.environ.get(name, "")
+        if not raw:
+            log.info("%s: 미설정", name)
+            continue
+        clean = raw.strip()
+        prefix = clean[:5] if name != "SLACK_CHANNEL_ID" else clean
+        note = "" if clean == raw else f" (앞뒤 공백/줄바꿈 {len(raw) - len(clean)}자 제거함)"
+        log.info("%s: %s... 길이 %d%s", name, prefix, len(clean), note)
+
+
 def main():
+    log_auth_shape()
     bq = get_bq_client()
     rows = fetch_unsent(bq)
     if not rows:
