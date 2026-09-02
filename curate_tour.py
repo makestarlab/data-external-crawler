@@ -338,28 +338,45 @@ def repair_tweet_ids(results, tweets, x_handle):
     return results, repaired
 
 
-def call_claude(client, x_handle, artist_roster, tweets):
-    """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
-    # 포맷은 curate_events.call_claude 와 같은 형태로 맞춘다.
-    # [2026-09-01] 예전엔 "[tweet_id=123]" 대괄호 라벨이었는데, 모델이 이걸 식별자가 아니라
-    # 장식으로 보고 결과에는 순번을 매겨 돌려줬다. 필드처럼 "- tweet_id: 123 |" 로 주면 그대로 복사한다.
-    lines = []
+def build_user_message(x_handle, known_artist_name, tweets):
+    """Claude 에 보낼 사용자 메시지를 만든다.
+
+    함수로 뺀 이유: [2026-09-01] 이 안에서 변수 섀도잉 사고가 났다.
+    트윗 목록을 담은 지역변수 `lines` 를 로스터 목록으로 덮어써서, 메시지에 트윗이
+    한 건도 안 들어가고 아티스트 이름 목록만 두 번 들어갔다. 모델은 정직하게
+    "트윗 본문 없이 아티스트명만 제공되어 판단 불가" 라고 답했고 1,749건이 통째로 날아갔다.
+    조립을 함수로 분리해 두면 "메시지에 본문이 들어 있는가" 를 테스트로 못 박을 수 있다.
+
+    로스터를 아예 안 넣는다. curate_tour 는 ARTIST 계정만 처리하고 계정 주인은 이미
+    알고 있으므로, 수백 줄짜리 명단 대신 그 아티스트 이름 한 줄이면 충분하다.
+    (curate_events 도 로스터는 SELLER 계정에만 넣는다)
+    """
+    tweet_lines = []
     for t in tweets:
         created = t["tweet_created_at"].isoformat() if t.get("tweet_created_at") else ""
         body = (t.get("tweet_text") or "").replace("\n", " / ")
-        lines.append(f"- tweet_id: {t['tweet_id']} | 작성일: {created}\n  본문: {body}")
-    # load_entity_lookup 은 로스터를 "한글명 (영문명)" 줄바꿈 문자열로 돌려준다.
-    # 그대로 넣으면 프롬프트가 길어져 캐시 미스가 늘고 오판도 늘어나므로 줄 수로 자른다.
-    roster_hint = ""
-    if artist_roster:
-        lines = [ln for ln in artist_roster.splitlines() if ln.strip()][:300]
-        if lines:
-            roster_hint = ("\n\n<등록된 아티스트명 목록 - artist_names 는 가급적 이 표기를 따를 것>\n"
-                           + "\n".join(lines))
-    user_msg = (f"계정: @{x_handle}\n"
-                f"아래 {len(tweets)}건의 트윗 각각에 대해 결과를 하나씩 돌려주세요.\n"
-                f"각 결과의 tweet_id 에는 아래 목록에 적힌 값을 그대로 복사해 넣으세요."
-                f"{roster_hint}\n\n분석할 포스팅 목록:\n" + "\n".join(lines))
+        tweet_lines.append(f"- tweet_id: {t['tweet_id']} | 작성일: {created}\n  본문: {body}")
+
+    header = [f"계정: @{x_handle}"]
+    if known_artist_name:
+        header.append(f"이 계정은 {known_artist_name} 본인의 공식 계정입니다. "
+                      f"artist_names 는 특별한 사정이 없으면 ['{known_artist_name}'] 로 두세요.")
+    header.append(f"아래 '분석할 신규 포스팅 목록' 의 {len(tweets)}건 각각에 대해 결과를 "
+                  f"하나씩 돌려주세요.")
+    header.append("각 결과의 tweet_id 에는 해당 포스팅 줄에 적힌 tweet_id 값을 그대로 복사하세요.")
+
+    # 포맷은 curate_events.call_claude 와 같은 필드 형태로 맞춘다.
+    # [2026-09-01] 예전엔 "[tweet_id=123]" 대괄호 라벨이었는데, 모델이 이걸 식별자가 아니라
+    # 장식으로 보고 결과에는 순번을 매겨 돌려줬다.
+    #
+    # 포스팅 목록은 반드시 메시지 맨 끝에 둔다. 중간에 다른 목록을 끼워 넣으면
+    # "아래 목록" 이 무엇을 가리키는지 모호해진다.
+    return "\n".join(header) + "\n\n분석할 신규 포스팅 목록:\n" + "\n".join(tweet_lines)
+
+
+def call_claude(client, x_handle, known_artist_name, tweets):
+    """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
+    user_msg = build_user_message(x_handle, known_artist_name, tweets)
 
     delay = 2
     for attempt in range(1, MAX_RETRIES + 1):
@@ -518,7 +535,7 @@ def main():
     bq = get_bq_client()
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-    name_to_id, _id_to_name, artist_roster = load_entity_lookup(bq)
+    name_to_id, id_to_name, _artist_roster = load_entity_lookup(bq)
     by_handle = fetch_candidate_posts(bq)
     if not by_handle:
         log.info("투어 큐레이션할 신규 포스팅 없음")
@@ -540,8 +557,11 @@ def main():
         # 자동으로 다시 대상이 된다.
         try:
             raw_by_id = {t["tweet_id"]: t for t in tweets}
+            # 이 계정의 주인 이름. 로스터 전체 대신 이 한 줄만 프롬프트에 넣는다.
+            owner_entity = next((t.get("entity_id") for t in tweets if t.get("entity_id")), None)
+            known_artist_name = id_to_name.get(owner_entity) if owner_entity else None
             for batch in chunked(tweets, BATCH_SIZE):
-                results = call_claude(client, x_handle, artist_roster, batch)
+                results = call_claude(client, x_handle, known_artist_name, batch)
                 calls += 1
                 all_rows.extend(build_rows(x_handle, raw_by_id, results,
                                            name_to_id, run_date, extracted_at))
