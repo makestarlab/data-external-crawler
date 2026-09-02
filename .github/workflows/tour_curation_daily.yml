@@ -28,7 +28,10 @@ on:
 jobs:
   curate-tour:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # [2026-09-02] 60 -> 180. 90일 백필이 호출당 17초 x 180호출 = 약 51분이라 60분에
+    # 아슬아슬했다. curate_tour.py 는 TOUR_MAX_MINUTES(기본 150분)에 스스로 멈추고
+    # 남은 결과를 적재하므로, 러너 타임아웃은 그보다 넉넉해야 한다.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
