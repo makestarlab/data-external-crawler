@@ -220,11 +220,11 @@ def fetch_candidate_posts(bq):
     cutoff = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).date().isoformat()
     rows = list(bq.query(
         f"""
-        SELECT r.tweet_id, r.x_handle, r.entity_id, r.tweet_text, r.tweet_url,
+        SELECT r.tweet_id, r.x_handle, r.entity_id, r.entity_type, r.tweet_text, r.tweet_url,
                r.tweet_created_at, r.entities_json
         FROM `{RAW_TABLE}` r
         LEFT JOIN (SELECT DISTINCT tweet_id FROM `{TOUR_TABLE}`) d USING (tweet_id)
-        WHERE r.entity_type = 'ARTIST'
+        WHERE r.entity_type IN ('ARTIST', 'PROMOTER')
           AND NOT IFNULL(r.is_retweet, FALSE)
           AND r.run_date >= @cutoff
           AND d.tweet_id IS NULL
@@ -510,12 +510,21 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
                 entity_ids.append(eid)
         # 계정 자기참조 폴백: 아티스트 계정이 자기 투어를 알리는 게 대부분이므로,
         # 본문에서 이름을 못 뽑았으면 계정 소유 엔티티를 쓴다 (기존 크롤러와 같은 로직).
-        if not entity_ids and raw.get("entity_id"):
+        #
+        # [2026-09-02] PROMOTER 계정에는 이 폴백을 쓰면 안 된다. 프로모터·레이블·지역
+        #   계정은 남의 공연을 알리는 자리라, 본문에서 아티스트를 못 뽑았을 때 계정
+        #   엔티티를 넣으면 'hello82 의 투어' 같은 헛된 행이 생긴다. 차라리 비워두고
+        #   아래에서 확인 필요로 올린다.
+        is_promoter = (raw.get("entity_type") == "PROMOTER")
+        if not entity_ids and raw.get("entity_id") and not is_promoter:
             entity_ids = [raw["entity_id"]]
 
         urls = extract_urls(raw.get("entities_json"), raw.get("tweet_text"))
         vendor = detect_vendor(urls, raw.get("tweet_text"))
-        primary_artist = artist_names[0] if artist_names else (raw.get("entity_id") or x_handle)
+        # show_key 는 아티스트 기준이어야 같은 공연이 묶인다. 프로모터 계정에서
+        # 아티스트를 못 뽑았으면 계정명으로 키를 만들지 말고 비워둔다.
+        primary_artist = (artist_names[0] if artist_names
+                          else (None if is_promoter else (raw.get("entity_id") or x_handle)))
 
         shows, dropped_dates = [], 0
         for s in (res.get("shows") or []):
@@ -558,7 +567,8 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
             reasons.append("도시 결측")
         if not entity_ids:
             # 조용한 NULL 이 커버리지를 갉아먹는 지점. 반드시 사람이 보게 만든다.
-            reasons.append("entity_master 매칭 실패 - 로스터 등록 필요")
+            reasons.append("프로모터 공지인데 아티스트 특정 실패" if is_promoter
+                           else "entity_master 매칭 실패 - 로스터 등록 필요")
         if dropped_dates:
             reasons.append(f"날짜 파싱 실패 {dropped_dates}건")
 
