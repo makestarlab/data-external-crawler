@@ -38,6 +38,8 @@ from bq_common import get_bq_client  # noqa: E402
 PROJECT = "makestar-dw"
 LOCATION = "asia-northeast3"
 MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
+# 미응답이 이 비율을 넘으면 점수를 내지 않고 실패로 끝낸다.
+MISSING_ABORT_PCT = float(os.environ.get("EVAL_MISSING_ABORT_PCT", "20"))
 
 FETCH = """
 SELECT
@@ -290,6 +292,27 @@ def main():
             if done % 10 == 0:
                 print("  %d/%d" % (done, len(rows)))
 
+    # [2026-09-03] 점수표보다 미응답률을 먼저 본다.
+    #   gpt-5.6-terra 첫 시도에서 60건 전부 HTTP 400 이 났는데, 모델이 아무것도
+    #   안 돌려준 걸 "전부 제외" 로 채점해서 83.3% 라는 그럴듯한 숫자가 찍혔다.
+    #   호출이 실패한 것과 모델이 제외 판정을 내린 것은 완전히 다른 일인데
+    #   표만 보면 구분이 안 된다. 그래서 임계치를 넘으면 표를 아예 안 찍는다.
+    missing = sum(1 for d in detail if d["missing_from_response"])
+    miss_pct = missing / len(detail) * 100 if detail else 0
+    if miss_pct >= MISSING_ABORT_PCT:
+        print("\n" + "=" * 64)
+        print("평가 중단: 응답에 안 담겨 온 트윗이 %d/%d건 (%.0f%%) 이다."
+              % (missing, len(detail), miss_pct))
+        print("이건 판정 결과가 아니라 호출이 실패했다는 뜻이다. 위 로그의 에러를 먼저 보라.")
+        print("점수는 무의미하므로 찍지 않는다.")
+        print("=" * 64)
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump({"model": MODEL, "few_shot": args.few_shot,
+                       "aborted": "missing_rate", "missing": missing,
+                       "total": len(detail), "detail": detail},
+                      f, ensure_ascii=False, indent=2)
+        sys.exit(1)
+
     print("\n%-18s %5s %6s %6s %6s   %s" % ("층", "건수", "정확도", "FP", "FN", "타이틀정확도"))
     for k in sorted(agg, key=lambda x: (x == "__전체__", x)):
         a = agg[k]
@@ -298,9 +321,9 @@ def main():
                 if a["t_n"] else "—")
         print("%-18s %5d %5.1f%% %6d %6d   %s" % (k, a["n"], acc, a["fp"], a["fn"], tacc))
 
-    missing = sum(1 for d in detail if d["missing_from_response"])
     if missing:
-        print("\n주의: 응답에 안 담겨 온 트윗 %d건. 배치가 크거나 max_tokens 가 모자란 신호다." % missing)
+        print("\n주의: 응답에 안 담겨 온 트윗 %d건 (%.0f%%). "
+              "배치가 크거나 출력 상한이 모자란 신호다." % (missing, miss_pct))
 
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump({"model": MODEL, "few_shot": args.few_shot,

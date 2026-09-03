@@ -15,25 +15,44 @@ CURATION_MODEL / TOUR_CURATION_MODEL 값만 바꾸면 코드 수정 없이 왔�
 
 두 API 의 실질적인 차이 (여기서 흡수한다)
 ------------------------------------------
+0. 엔드포인트
+     Anthropic /v1/messages
+     OpenAI    /v1/responses  <- Chat Completions 가 아니다
+
+   [2026-09-03] 처음엔 chat.completions 로 짰다가 첫 eval 에서 60건 전부 HTTP 400 이
+   났다. 서버 메시지가 정확했다:
+     "Function tools with reasoning_effort are not supported for gpt-5.6-terra
+      in /v1/chat/completions. To use function tools, use /v1/responses or set
+      reasoning_effort to 'none'."
+   GPT-5.6 계열은 추론 모델이라 도구 호출을 Responses API 에서 해야 한다.
+   reasoning_effort 를 'none' 으로 꺼서 Chat Completions 를 쓰는 길도 있지만,
+   우리가 시키는 건 "이게 투어 공지인가" 라는 판정이라 추론을 끄면 그만큼 손해다.
+
 1. 도구 스키마 모양
      Anthropic {name, description, input_schema}
-     OpenAI    {type:'function', function:{name, description, parameters}}
+     OpenAI    {type:'function', name, description, parameters}
+   Responses API 는 Chat Completions 와 달리 function 키로 한 번 더 감싸지 않는다.
 2. 강제 호출
      Anthropic tool_choice={'type':'tool', 'name': ...}
-     OpenAI    tool_choice={'type':'function', 'function':{'name': ...}}
-3. 결과를 꺼내는 위치
+     OpenAI    tool_choice={'type':'function', 'name': ...}
+3. 프롬프트를 넣는 자리
+     Anthropic system= / messages=
+     OpenAI    instructions= / input=
+4. 결과를 꺼내는 위치
      Anthropic resp.content[i].input  -> 이미 dict
-     OpenAI    resp.choices[0].message.tool_calls[0].function.arguments -> JSON '문자열'
+     OpenAI    resp.output[i] 중 type=='function_call' 인 항목의 .arguments -> JSON '문자열'
    OpenAI 쪽은 파싱이 한 번 더 필요하고, 응답이 잘리면 그 문자열이 깨진 JSON 으로 온다.
    이때 예외로 죽이지 않고 문자열 그대로 얹어서 돌려준다. 호출부의 _coerce_results 가
    잘린 문자열에서 온전한 항목만 건져내는 로직을 이미 갖고 있다 (2026-08-13, 08-24).
-4. 잘림 신호
+5. 잘림 신호
      Anthropic stop_reason == 'max_tokens'
-     OpenAI    finish_reason == 'length'
-5. 출력 상한 파라미터 이름
+     OpenAI    status == 'incomplete'
+6. 출력 상한 파라미터 이름
      Anthropic max_tokens
-     OpenAI    max_completion_tokens
-6. 프롬프트 캐싱
+     OpenAI    max_output_tokens
+   추론 모델은 추론 토큰도 이 상한을 먹는다. 같은 값이면 실제로 쓸 수 있는 출력이
+   줄어들 수 있어서, 잘림 로그가 늘면 상한을 올려야 한다.
+7. 프롬프트 캐싱
      Anthropic 는 cache_control 로 명시해야 하고, OpenAI 는 1024 토큰 이상 공통 접두사를
      자동으로 캐싱한다. 우리 system 프롬프트는 호출마다 동일하므로 OpenAI 에서는
      따로 할 게 없다. 대신 system 을 messages 맨 앞에 두는 순서를 깨면 안 된다.
@@ -65,14 +84,16 @@ def resolve_provider(model):
 
 
 def to_openai_tool(tool_schema):
-    """Anthropic 모양 도구 스키마를 OpenAI 모양으로 바꾼다."""
+    """Anthropic 모양 도구 스키마를 OpenAI Responses API 모양으로 바꾼다.
+
+    Chat Completions 는 {'type':'function','function':{...}} 처럼 한 번 더 감싸지만
+    Responses 는 평평하다. 감싼 채로 보내면 name 을 못 찾는다.
+    """
     return {
         "type": "function",
-        "function": {
-            "name": tool_schema["name"],
-            "description": tool_schema.get("description", ""),
-            "parameters": tool_schema["input_schema"],
-        },
+        "name": tool_schema["name"],
+        "description": tool_schema.get("description", ""),
+        "parameters": tool_schema["input_schema"],
     }
 
 
@@ -119,22 +140,34 @@ def call_tool(client, model, system, user, tool_schema, max_tokens):
                 return block.input, truncated
         return None, truncated
 
-    resp = client.chat.completions.create(
+    kwargs = dict(
         model=model,
-        max_completion_tokens=max_tokens,
+        max_output_tokens=max_tokens,
+        instructions=system,
+        input=user,
         tools=[to_openai_tool(tool_schema)],
-        tool_choice={"type": "function", "function": {"name": tool_schema["name"]}},
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+        tool_choice={"type": "function", "name": tool_schema["name"]},
     )
-    choice = resp.choices[0]
-    truncated = getattr(choice, "finish_reason", None) == "length"
-    calls = getattr(choice.message, "tool_calls", None) or []
-    if not calls:
+    # 추론 강도는 기본값에 맡긴다. 판정 품질이 걸린 부분이라 임의로 낮추지 않는다.
+    # 비용이나 지연이 문제가 되면 OPENAI_REASONING_EFFORT 로 조절한다.
+    effort = os.environ.get("OPENAI_REASONING_EFFORT")
+    if effort:
+        kwargs["reasoning"] = {"effort": effort}
+
+    resp = client.responses.create(**kwargs)
+
+    truncated = getattr(resp, "status", None) == "incomplete"
+    if truncated:
+        detail = getattr(resp, "incomplete_details", None)
+        log.warning("OpenAI 응답이 incomplete 로 끝났다: %s", detail)
+
+    raw = None
+    for item in (getattr(resp, "output", None) or []):
+        if getattr(item, "type", None) == "function_call":
+            raw = getattr(item, "arguments", None)
+            break
+    if raw is None:
         return None, truncated
-    raw = calls[0].function.arguments
     try:
         return json.loads(raw), truncated
     except (json.JSONDecodeError, TypeError):
