@@ -37,7 +37,7 @@ from bq_common import get_bq_client  # noqa: E402
 
 PROJECT = "makestar-dw"
 LOCATION = "asia-northeast3"
-MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
+MODEL = os.environ.get("CURATION_MODEL", "gpt-5.6-terra")
 # 미응답이 이 비율을 넘으면 점수를 내지 않고 실패로 끝낸다.
 MISSING_ABORT_PCT = float(os.environ.get("EVAL_MISSING_ABORT_PCT", "20"))
 

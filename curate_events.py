@@ -43,7 +43,7 @@ RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 CURATED_TABLE = f"{PROJECT_ID}.{DATASET}.x_event_announcements"
 ENTITY_TABLE = f"{PROJECT_ID}.{DATASET}.entity_master"
 
-MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
+MODEL = os.environ.get("CURATION_MODEL", "gpt-5.6-terra")
 # 모델 이름이 프로바이더를 정한다. llm_client.resolve_provider 참고.
 MAX_OUTPUT_TOKENS = int(os.environ.get("CURATION_MAX_OUTPUT_TOKENS", "16000"))
 RECENT_WINDOW_DAYS = 45   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간

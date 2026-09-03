@@ -32,7 +32,7 @@ FROM UNNEST([
   ('ateez_jp', 'PROMOTER', NULL, 'ATEEZofficialjp', 'ATEEZofficialjp', 'ATEEZofficialjp', 'CONFIRMED', 'ATEEZ 일본 공식'),
   ('nct_jp', 'PROMOTER', NULL, 'NCT_OFFICIAL_JP', 'NCT_OFFICIAL_JP', 'NCT_OFFICIAL_JP', 'CONFIRMED', 'NCT 일본 공식'),
   ('tws_jp', 'PROMOTER', NULL, 'TWS_PLEDIS_JP', 'TWS_PLEDIS_JP', 'TWS_PLEDIS_JP', 'CONFIRMED', 'TWS 일본 공식'),
-  ('hello82', 'PROMOTER', NULL, 'hello82PRESENTS', 'hello82PRESENTS', 'hello82PRESENTS', 'CONFIRMED', '미주 K-pop 공연 프로모터'),
+  ('hello82_presents', 'PROMOTER', NULL, 'hello82PRESENTS', 'hello82PRESENTS', 'hello82PRESENTS', 'CONFIRMED', '미주 K-pop 공연 프로모터. entity_id 는 hello82shop(SELLER)과 겹치지 않게 hello82_presents'),
   ('amaze_kr', 'PROMOTER', NULL, 'AMAZE_KR', 'AMAZE_KR', 'AMAZE_KR', 'CONFIRMED', '국내외 공연 기획사'),
   ('leo_presents', 'PROMOTER', NULL, 'LeoPresents', 'LeoPresents', 'LeoPresents', 'CONFIRMED', '공연 프로모터'),
   ('wanxing', 'PROMOTER', NULL, 'Wanxing_ent', 'Wanxing_ent', 'Wanxing_ent', 'CONFIRMED', '중화권 공연 기획사'),
