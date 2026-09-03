@@ -62,6 +62,8 @@ BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
 #   호출당 2~3초로 비정상적으로 빨랐던 것도 같은 징후다.
 LOOKBACK_DAYS = int(os.environ.get("TOUR_LOOKBACK_DAYS", "14"))
 CONFIDENCE_REVIEW_THRESHOLD = float(os.environ.get("TOUR_CONF_THRESHOLD", "0.5"))
+# 확인 필요 비율 경보를 낼 최소 표본. 이보다 적으면 비율이 의미가 없다.
+REVIEW_ALERT_MIN_N = int(os.environ.get("TOUR_REVIEW_ALERT_MIN_N", "20"))
 #   [2026-09-02] 0.75 -> 0.5. 30일치 82건의 confidence 분포를 보고 정했다.
 #     0.90+      25건 - 전 회차 날짜·도시·베뉴 완비
 #     0.70~0.79  17건 - 날짜·도시는 완비, 베뉴만 없음(14/17). 정상 상태다
@@ -703,7 +705,7 @@ def main():
     shows = sum(len(r["shows"]) for r in relevant)
     dated = sum(1 for r in relevant for s in r["shows"] if s["event_date"])
     review = sum(1 for r in relevant if r["needs_review"])
-    log.info("Claude 호출 %d회 | 입력 %d건 -> 결과 %d행(적재 %d) (투어 공지 %d건) | "
+    log.info("모델 호출 %d회 | 입력 %d건 -> 결과 %d행(적재 %d) (투어 공지 %d건) | "
              "회차 %d개(날짜 확정 %d) | 확인 필요 %d건",
              calls, total_in, len(all_rows), loaded, len(relevant), shows, dated, review)
     if stopped_early:
@@ -722,10 +724,12 @@ def main():
     if kinds:
         log.info("공지 유형: %s", ", ".join(f"{k}={v}" for k, v in sorted(kinds.items())))
 
-    if relevant and review / len(relevant) > 0.5:
-        # 절반 넘게 확인 필요로 나오면 프롬프트나 로스터에 문제가 생긴 것이다.
-        log.warning("확인 필요 비율이 %.0f%% 입니다 - 프롬프트/로스터 점검 필요",
-                    review / len(relevant) * 100)
+    # [2026-09-03] 표본 하한을 뒀다. 이전엔 건수와 무관하게 비율만 봤는데,
+    #   투어 공지 4건 중 3건이면 75%% 가 되어 "프롬프트 점검 필요" 경보가 떴다.
+    #   4건짜리 비율은 아무것도 말해주지 않는다. 매일 뜨는 경보는 안 보게 된다.
+    if len(relevant) >= REVIEW_ALERT_MIN_N and review / len(relevant) > 0.5:
+        log.warning("확인 필요 비율이 %.0f%% 입니다 (%d/%d) - 프롬프트/로스터 점검 필요",
+                    review / len(relevant) * 100, review, len(relevant))
 
     if broken:
         # 적재는 이미 끝났으므로 성공분은 남는다. 그래도 워크플로는 실패로 띄워서

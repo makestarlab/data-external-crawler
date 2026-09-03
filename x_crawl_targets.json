@@ -50,6 +50,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "ATEEZofficialjp",
+    "entity_id": "ateez",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "BAEKHYUN_INB100",
     "entity_id": "exo_baekhyun",
     "entity_type": "ARTIST"
@@ -210,6 +215,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "NCT_OFFICIAL_JP",
+    "entity_id": "nct127",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "NCTsmtown",
     "entity_id": "nct_taeyong",
     "entity_type": "ARTIST"
@@ -325,6 +335,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "plave_jp",
+    "entity_id": "plave",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "plave_official",
     "entity_id": "plave",
     "entity_type": "ARTIST"
@@ -342,6 +357,11 @@
   {
     "x_handle": "RBW_MAMAMOO",
     "entity_id": "mamamoo",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "RIIZE_JPN",
+    "entity_id": "riize",
     "entity_type": "ARTIST"
   },
   {
@@ -410,6 +430,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "TWS_PLEDIS_JP",
+    "entity_id": "tws",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "TXT_bighit",
     "entity_id": "txt",
     "entity_type": "ARTIST"
@@ -442,6 +467,11 @@
   {
     "x_handle": "XH_official",
     "entity_id": "xdinary_heroes",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "xikers_jp",
+    "entity_id": "xikers",
     "entity_type": "ARTIST"
   },
   {
@@ -500,11 +530,6 @@
     "entity_type": "PROMOTER"
   },
   {
-    "x_handle": "ATEEZofficialjp",
-    "entity_id": "ateez_jp",
-    "entity_type": "PROMOTER"
-  },
-  {
     "x_handle": "BELIFTLAB",
     "entity_id": "beliftlab",
     "entity_type": "PROMOTER"
@@ -530,28 +555,8 @@
     "entity_type": "PROMOTER"
   },
   {
-    "x_handle": "NCT_OFFICIAL_JP",
-    "entity_id": "nct_jp",
-    "entity_type": "PROMOTER"
-  },
-  {
-    "x_handle": "plave_jp",
-    "entity_id": "plave_jp",
-    "entity_type": "PROMOTER"
-  },
-  {
-    "x_handle": "RIIZE_JPN",
-    "entity_id": "riize_jpn",
-    "entity_type": "PROMOTER"
-  },
-  {
     "x_handle": "SMTOWNGLOBAL",
     "entity_id": "smtown_global",
-    "entity_type": "PROMOTER"
-  },
-  {
-    "x_handle": "TWS_PLEDIS_JP",
-    "entity_id": "tws_jp",
     "entity_type": "PROMOTER"
   },
   {
@@ -562,11 +567,6 @@
   {
     "x_handle": "weverseofficial",
     "entity_id": "weverse_official",
-    "entity_type": "PROMOTER"
-  },
-  {
-    "x_handle": "xikers_jp",
-    "entity_id": "xikers_jp",
     "entity_type": "PROMOTER"
   },
   {
