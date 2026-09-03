@@ -48,6 +48,7 @@ jobs:
       - name: Curate backfilled events (raw -> x_event_announcements)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
         run: python curate_events.py

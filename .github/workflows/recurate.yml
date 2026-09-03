@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       curation_model:
-        description: '모델 override. 비워두면 프로덕션과 같은 Sonnet 5.'
+        description: '모델 override. 비워두면 프로덕션과 같은 Sonnet 5. 예: gpt-5.6-terra'
         required: false
         default: ''
       confirm:
@@ -45,6 +45,7 @@ jobs:
       - name: Curate (raw -> x_event_announcements)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           CURATION_MODEL: ${{ github.event.inputs.curation_model || 'claude-sonnet-5' }}
         run: python curate_events.py

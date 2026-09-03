@@ -17,7 +17,7 @@ on:
         required: false
         default: ''
       model:
-        description: '추출 모델 override (비워두면 claude-sonnet-5)'
+        description: '추출 모델 override. 비워두면 claude-sonnet-5. 예: gpt-5.6-terra'
         required: false
         default: ''
       skip_slack:
@@ -49,12 +49,14 @@ jobs:
       #   1초짜리 스텝으로 그걸 막는다. 깨지면 API 를 아예 안 부른다.
       - name: Run regression tests (fail fast before spending tokens)
         run: |
+          python test_llm_client.py
           python test_curate_tour.py
           python test_notify_slack.py
 
       - name: Curate tour announcements (raw -> x_tour_announcements)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           TOUR_CURATION_MODEL: ${{ github.event.inputs.model || 'claude-sonnet-5' }}
           TOUR_LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '14' }}

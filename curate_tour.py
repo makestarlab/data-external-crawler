@@ -17,7 +17,7 @@ x_posts_raw.is_curated 를 쓰지 않는 이유
   이미 적재된 tweet_id 를 안티조인해서 멱등성을 확보한다.
 
 필요한 환경변수(GitHub Secrets):
-  - ANTHROPIC_API_KEY
+  - ANTHROPIC_API_KEY 또는 OPENAI_API_KEY (TOUR_CURATION_MODEL 이 고르는 쪽)
   - GCP_SERVICE_ACCOUNT_JSON  (bq_common.py 참고)
 """
 import hashlib
@@ -30,9 +30,9 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-import anthropic
 from google.cloud import bigquery
 
+import llm_client
 from bq_common import PROJECT_ID, DATASET, get_bq_client
 # 로스터 해소 로직과 응답 정규화는 기존 것을 그대로 쓴다.
 #   load_entity_lookup / resolve_entity_id : entity_master 4단계 역색인 + 별칭 처리
@@ -54,6 +54,8 @@ RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 TOUR_TABLE = f"{PROJECT_ID}.{DATASET}.x_tour_announcements"
 
 MODEL = os.environ.get("TOUR_CURATION_MODEL", "claude-sonnet-5")
+# 모델 이름이 프로바이더를 정한다. llm_client.resolve_provider 참고.
+MAX_OUTPUT_TOKENS = int(os.environ.get("TOUR_MAX_OUTPUT_TOKENS", "8000"))
 BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
 #   [2026-09-01] 25 -> 12. 25건을 한 번에 주면 모델이 응답을 짧게 줄이려고 tweet_id 를
 #   순번이나 placeholder 로 대체하는 현상이 나왔다 (첫 백필에서 전량 유실).
@@ -442,43 +444,44 @@ def build_user_message(x_handle, known_artist_name, tweets):
     return "\n".join(header) + "\n\n분석할 신규 포스팅 목록:\n" + "\n".join(tweet_lines)
 
 
-def call_claude(client, x_handle, known_artist_name, tweets):
+def call_model(client, x_handle, known_artist_name, tweets):
     """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
     user_msg = build_user_message(x_handle, known_artist_name, tweets)
 
     delay = 2
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = client.messages.create(
-                model=MODEL,
-                max_tokens=8000,
+            payload, truncated = llm_client.call_tool(
+                client, MODEL,
                 system=build_system_prompt(),
-                tools=[TOOL_SCHEMA],
-                tool_choice={"type": "tool", "name": "extract_tour_announcements"},
-                messages=[{"role": "user", "content": user_msg}],
+                user=user_msg,
+                tool_schema=TOOL_SCHEMA,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
-            for block in resp.content:
-                if block.type == "tool_use":
-                    raw = block.input.get("results", [])
-                    coerced = _coerce_results(raw, x_handle)
-                    if coerced is None:
-                        log.error("@%s: results 를 리스트로 복구하지 못했습니다 (type=%s) - "
-                                  "이 배치는 적재하지 않고 다음 실행에서 재시도됩니다",
-                                  x_handle, type(raw).__name__)
-                        return []
-                    coerced, _ = repair_tweet_ids(coerced, tweets, x_handle)
-                    return coerced
-            log.warning("@%s: tool_use 블록이 없습니다 - 빈 결과로 처리", x_handle)
-            return []
-        except (anthropic.APIStatusError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
-            status = getattr(e, "status_code", None)
-            # 400/401/403 은 재시도해도 같은 결과다. 나머지는 백오프 후 재시도.
-            if status in (400, 401, 403) or attempt == MAX_RETRIES:
-                log.error("@%s: Claude 호출 실패 (attempt %d/%d, status=%s): %s",
-                          x_handle, attempt, MAX_RETRIES, status, str(e)[:300])
+            if truncated:
+                log.error("@%s: 응답이 출력 상한에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
+                          x_handle, len(tweets))
+            if payload is None:
+                log.warning("@%s: 도구 호출이 없습니다 - 빈 결과로 처리", x_handle)
                 return []
-            log.warning("@%s: Claude 호출 재시도 %d/%d (status=%s, %ds 대기)",
-                        x_handle, attempt, MAX_RETRIES, status, delay)
+            raw = payload.get("results", [])
+            coerced = _coerce_results(raw, x_handle)
+            if coerced is None:
+                log.error("@%s: results 를 리스트로 복구하지 못했습니다 (type=%s) - "
+                          "이 배치는 적재하지 않고 다음 실행에서 재시도됩니다",
+                          x_handle, type(raw).__name__)
+                return []
+            coerced, _ = repair_tweet_ids(coerced, tweets, x_handle)
+            return coerced
+        except Exception as e:
+            # 프로바이더마다 예외 클래스가 달라 특정 타입으로 잡지 않는다.
+            # 재시도할 가치가 있는지는 상태 코드로 판단한다.
+            if llm_client.is_permanent(e) or attempt == MAX_RETRIES:
+                log.error("@%s: 모델 호출 실패 (attempt %d/%d): %s",
+                          x_handle, attempt, MAX_RETRIES, llm_client.err_detail(e))
+                return []
+            log.warning("@%s: 모델 호출 재시도 %d/%d (%ds 대기): %s",
+                        x_handle, attempt, MAX_RETRIES, delay, llm_client.err_detail(e, 120))
             time.sleep(delay)
             delay *= 2
     return []
@@ -623,7 +626,7 @@ def load_rows(bq, rows):
 
 def main():
     bq = get_bq_client()
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = llm_client.get_client(MODEL)
 
     name_to_id, id_to_name, _artist_roster = load_entity_lookup(bq)
     # entity_id -> 영문명. load_entity_lookup 이 안 돌려주므로 따로 읽는다.
@@ -677,7 +680,7 @@ def main():
             known_artist_name = (name_en_by_id.get(owner_entity) or id_to_name.get(owner_entity)
                                  if owner_entity else None)
             for batch in chunked(tweets, BATCH_SIZE):
-                results = call_claude(client, x_handle, known_artist_name, batch)
+                results = call_model(client, x_handle, known_artist_name, batch)
                 calls += 1
                 all_rows.extend(build_rows(x_handle, raw_by_id, results,
                                            name_to_id, run_date, extracted_at))
