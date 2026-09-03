@@ -30,16 +30,18 @@ HEADERS = [
     "Regular 티켓 가격", "VIP 티켓 가격", "판매 링크", "작성 일자", "비고",
 ]
 WIDTHS = [12, 14, 16, 42, 18, 10, 16, 18, 34, 12, 12, 14, 14, 40, 12, 62]
-# 아직 못 채우는 칸 (1-based 컬럼 번호)
-GAP_COLS = (10, 11, 12, 13)
+# 아직 못 채우는 칸 (1-based 컬럼 번호): 판매 완료 좌석수, Regular/VIP 가격
+GAP_COLS = (11, 12, 13)
+CAP_COL = 10   # 공연 규모
 ARIAL = "Arial"
 
 
 def fetch(bq):
     return list(bq.query(f"""
         SELECT `공연_일자`, `공연_유형`, `단독_이벤트_제안_여부`, `공연명`, `IP`,
-               `리전`, `국가`, `도시`, `베뉴명`, `판매_링크`, `작성_일자`, `비고`,
-               needs_review
+               `리전`, `국가`, `도시`, `베뉴명`, `공연_규모_판매좌석수`,
+               `판매_링크`, `작성_일자`, `비고`,
+               needs_review, venue_status, capacity_source, venue_capacity_uncertain
         FROM `{VIEW}`
         ORDER BY `공연_일자`, `IP`, `도시`
     """).result())
@@ -56,13 +58,18 @@ def build(rows, out_path):
     note_fill = PatternFill("solid", fgColor="FFF2CC")
     gap_fill = PatternFill("solid", fgColor="F2F2F2")
     warn_fill = PatternFill("solid", fgColor="FCE4D6")
+    # 시트 범례가 정한 색이다. 분홍 = "정확한 판매 좌석수가 없어 공연장 Full capacity 를
+    # 참고로 적음". venue_master 에서 채운 값이 정확히 그 성격이라 같은 색을 쓴다.
+    # 색을 안 칠하면 읽는 사람이 실제 판매 좌석수로 오해한다.
+    pink_fill = PatternFill("solid", fgColor="F4CCCC")
 
     ws["A1"] = "X 공식계정 자동 수집 결과 — '글로벌 투어 현황' 시트 양식"
     ws["A1"].font = Font(name=ARIAL, size=13, bold=True)
     ws["A2"] = (
         f"생성일 {datetime.date.today():%Y-%m-%d} · {len(rows)}행 · 출처 BigQuery {VIEW}\n"
-        "회색 칸(공연 규모·판매 완료 좌석수·티켓 가격)은 트윗 본문에 없는 정보다. "
-        "판매 링크를 타고 들어가거나 베뉴 마스터가 있어야 채울 수 있다. 빈칸으로 두었다.\n"
+        "분홍 칸(공연 규모)은 venue_master 에서 채운 공연장 Full capacity 다. "
+        "그 공연의 실제 판매 좌석수가 아니다 - 시트 범례와 같은 약속이다.\n"
+        "회색 칸(판매 완료 좌석수·티켓 가격)은 아직 출처가 없다. 빈칸으로 두었다.\n"
         "주황색 행은 자동 판정이 확신하지 못한 건이다. 비고의 원문 링크로 확인이 필요하다.\n"
         "미국 도시는 시트 규칙상 주(州)까지 적어야 하는데, 트윗에 주 표기가 없어 도시명만 들어갔다."
     )
@@ -86,7 +93,7 @@ def build(rows, out_path):
         vals = [
             r["공연_일자"], r["공연_유형"], r["단독_이벤트_제안_여부"], r["공연명"], r["IP"],
             r["리전"], r["국가"], r["도시"], r["베뉴명"],
-            None, None, None, None,
+            r["공연_규모_판매좌석수"], None, None, None,
             r["판매_링크"], r["작성_일자"], r["비고"],
         ]
         for c, v in enumerate(vals, start=1):
@@ -98,6 +105,12 @@ def build(rows, out_path):
                 cell.number_format = "yyyy-mm-dd"
             if c in GAP_COLS:
                 cell.fill = gap_fill
+            elif c == CAP_COL:
+                if v is not None:
+                    cell.fill = pink_fill
+                    cell.number_format = "#,##0"
+                else:
+                    cell.fill = gap_fill
             elif r["needs_review"]:
                 cell.fill = warn_fill
         if r["판매_링크"]:
@@ -125,7 +138,12 @@ def main():
     build(rows, out)
     review = sum(1 for r in rows if r["needs_review"])
     venue = sum(1 for r in rows if r["베뉴명"])
-    print(f"{out} 저장 | {len(rows)}행 (확인 필요 {review}, 베뉴 확보 {venue})")
+    cap = sum(1 for r in rows if r["공연_규모_판매좌석수"])
+    print(f"{out} 저장 | {len(rows)}행 "
+          f"(확인 필요 {review}, 베뉴명 {venue}, 수용인원 {cap})")
+    from collections import Counter
+    for k, n in Counter(r["venue_status"] for r in rows).most_common():
+        print(f"  {k}: {n}")
 
 
 if __name__ == "__main__":

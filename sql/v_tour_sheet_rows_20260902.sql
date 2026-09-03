@@ -9,9 +9,13 @@
 --   event_type '콘서트/투어'  -> 시트 '콘서트 / 투어' (슬래시 앞뒤 공백)
 --   country   'SOUTH KOREA'   -> 시트 'KOREA'
 --
--- 아직 못 채우는 칸 (전부 NULL 로 비워둔다. 빈칸이 틀린 값보다 낫다):
---   K 공연 규모, L 판매 완료 좌석수, M/N 티켓 가격
---   -> 트윗 본문에 없다. 판매 링크를 타고 들어가야 나온다. 베뉴 마스터가 필요한 지점.
+-- [2026-09-03] K 공연 규모는 venue_master 조인으로 채우기 시작했다.
+--   Ticketmaster Discovery 의 venue 객체에는 capacity 필드가 없다(문서 확인).
+--   어느 예매처 API 도 안 주므로 딕셔너리를 따로 세우는 것 외에 방법이 없다.
+--
+-- 아직 못 채우는 칸 (NULL 로 비워둔다. 빈칸이 틀린 값보다 낫다):
+--   L 판매 완료 좌석수 - 합법적으로 얻을 경로가 없다. 계획서의 '수요 지표'로 대체 예정
+--   M/N 티켓 가격      - Ticketmaster priceRanges 로 채울 수 있다. 키 발급 후.
 --   D 단독 이벤트 제안 여부 -> 사내 판단. 기본값 '미제안'.
 --
 -- 알려진 불일치: 시트 3행 기준은 멕시코를 북미로 규정하는데, 실제 데이터는
@@ -35,7 +39,7 @@ WITH base AS (
       WHEN '' THEN NULL
       ELSE UPPER(TRIM(s.country))
     END AS country_std
-  FROM `makestar-dw.makestar_ax.v_tour_shows_latest` s
+  FROM `makestar-dw.makestar_ax.v_tour_shows_enriched` s
 ),
 -- IP 는 시트 기준상 영문 공식명으로 통일해야 한다. 모델이 뽑은 artist_names 는
 -- 같은 그룹을 'DAY6' / '데이식스' 로 섞어 쓰고, 개인명('Young K')과 팀명이 갈린다.
@@ -85,7 +89,10 @@ SELECT
   country_std                                   AS `국가`,
   city                                          AS `도시`,
   venue_name                                    AS `베뉴명`,
-  CAST(NULL AS INT64)                           AS `공연_규모_판매좌석수`,
+  -- [2026-09-03] venue_master 에서 채운다. 시트 범례상 이 값은 '공연장 Full capacity' 이지
+  --   그 공연의 실제 판매 좌석수가 아니다. 시트에서는 분홍 F4CCCC 셀이 그 구분을 한다.
+  --   export_tour_sheet.py 가 이 열을 분홍으로 칠해 같은 약속을 지킨다.
+  base.venue_capacity                           AS `공연_규모_판매좌석수`,
   CAST(NULL AS INT64)                           AS `판매_완료_좌석수`,
   CAST(NULL AS STRING)                          AS `Regular_티켓_가격`,
   CAST(NULL AS STRING)                          AS `VIP_티켓_가격`,
@@ -101,5 +108,6 @@ SELECT
       CONCAT('원문: ', tweet_url)
     ]) x WHERE x IS NOT NULL), ' / ')            AS `비고`,
   -- 아래는 시트에 안 들어가지만 검증·조인용으로 남긴다.
-  show_key, x_handle, needs_review, confidence, announcement_kinds
+  show_key, x_handle, needs_review, confidence, announcement_kinds,
+  base.venue_status, base.capacity_source, base.venue_capacity_uncertain
 FROM base LEFT JOIN ip USING (show_key);
