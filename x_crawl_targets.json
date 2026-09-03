@@ -40,6 +40,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "Apinkjej",
+    "entity_id": "jungeunji",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "ATEEZofficial",
     "entity_id": "ateez",
     "entity_type": "ARTIST"
@@ -60,8 +65,18 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "bornfreeonekiss",
+    "entity_id": "kimjaejoong",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "BOYNEXTDOOR_KOZ",
     "entity_id": "boynextdoor",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "btob2mh",
+    "entity_id": "huta",
     "entity_type": "ARTIST"
   },
   {
@@ -102,6 +117,11 @@
   {
     "x_handle": "ENHYPEN",
     "entity_id": "enhypen",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "haneum_Official",
+    "entity_id": "janghaneum",
     "entity_type": "ARTIST"
   },
   {
@@ -185,6 +205,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "MADEIN_U",
+    "entity_id": "madein",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "NCTsmtown",
     "entity_id": "nct_taeyong",
     "entity_type": "ARTIST"
@@ -240,6 +265,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "official_fore",
+    "entity_id": "forestella",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "official_i_dle",
     "entity_id": "gidle",
     "entity_type": "ARTIST"
@@ -250,6 +280,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "official_kiiras",
+    "entity_id": "kiiras",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "OFFICIAL_MEOVV",
     "entity_id": "meovv",
     "entity_type": "ARTIST"
@@ -257,6 +292,11 @@
   {
     "x_handle": "OfficialMONSTAX",
     "entity_id": "monsta_x",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "officialTheWind",
+    "entity_id": "thewind",
     "entity_type": "ARTIST"
   },
   {
@@ -272,6 +312,11 @@
   {
     "x_handle": "ONEW_GRIFFIN",
     "entity_id": "onew",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "ONF_offcl",
+    "entity_id": "onf",
     "entity_type": "ARTIST"
   },
   {
@@ -430,6 +475,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "yuhz_official",
+    "entity_id": "yuhz",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "Yves___official",
     "entity_id": "yves",
     "entity_type": "ARTIST"
@@ -537,6 +587,11 @@
   {
     "x_handle": "_kpopnara_",
     "entity_id": "kpopnara",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "_mymusictaste",
+    "entity_id": "mymusictaste",
     "entity_type": "SELLER"
   },
   {
@@ -715,6 +770,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "MAPDAL_SEOUL",
+    "entity_id": "mapdalseoul",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "melon",
     "entity_id": "melon_music",
     "entity_type": "SELLER"
@@ -857,6 +917,11 @@
   {
     "x_handle": "yes24_official",
     "entity_id": "yes24",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "yglobalmusic",
+    "entity_id": "yglobalmusic",
     "entity_type": "SELLER"
   },
   {
