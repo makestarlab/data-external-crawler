@@ -445,6 +445,11 @@
     "entity_type": "PROMOTER"
   },
   {
+    "x_handle": "applewood_kr",
+    "entity_id": "applewood",
+    "entity_type": "PROMOTER"
+  },
+  {
     "x_handle": "ATEEZofficialjp",
     "entity_id": "ateez_jp",
     "entity_type": "PROMOTER"
@@ -466,7 +471,7 @@
   },
   {
     "x_handle": "hello82PRESENTS",
-    "entity_id": "hello82",
+    "entity_id": "hello82_presents",
     "entity_type": "PROMOTER"
   },
   {
@@ -515,6 +520,11 @@
     "entity_type": "PROMOTER"
   },
   {
+    "x_handle": "YX_LABELS",
+    "entity_id": "yx_labels",
+    "entity_type": "PROMOTER"
+  },
+  {
     "x_handle": "1stmusicx",
     "entity_id": "firstmusic",
     "entity_type": "SELLER"
@@ -545,6 +555,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "beatroadevent",
+    "entity_id": "beatroad_event",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "BlueDream_media",
     "entity_id": "bluedreammedia",
     "entity_type": "SELLER"
@@ -552,6 +567,11 @@
   {
     "x_handle": "bstageplus",
     "entity_id": "bstageplus",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "bugs_official_",
+    "entity_id": "bugs_music",
     "entity_type": "SELLER"
   },
   {
@@ -575,8 +595,23 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "FANTHEONE_offcl",
+    "entity_id": "fantheone",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "fromm_store",
     "entity_id": "frommstore",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "genie_kt",
+    "entity_id": "genie_music",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "hello82official",
+    "entity_id": "hello82_official",
     "entity_type": "SELLER"
   },
   {
@@ -630,6 +665,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "KPOP__TOGETHER",
+    "entity_id": "kpop_together",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "kpopmerch_inc",
     "entity_id": "kpopmerch",
     "entity_type": "SELLER"
@@ -675,6 +715,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "melon",
+    "entity_id": "melon_music",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "MillionMusic_kr",
     "entity_id": "millionmusic",
     "entity_type": "SELLER"
@@ -682,6 +727,11 @@
   {
     "x_handle": "MINIRECORD_SHOP",
     "entity_id": "minirecord",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "MINIVE_STORE",
+    "entity_id": "minive_store",
     "entity_type": "SELLER"
   },
   {
@@ -715,6 +765,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "myidolmiim",
+    "entity_id": "myidol_miim",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "mystargoods_",
     "entity_id": "mystargoods",
     "entity_type": "SELLER"
@@ -735,8 +790,23 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "pandoramusic",
+    "entity_id": "pandora_music",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "popmerchchina",
+    "entity_id": "popmerch_cn",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "RisingStar_kpop",
     "entity_id": "risingstar",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "seveneleven_kr",
+    "entity_id": "seven_eleven",
     "entity_type": "SELLER"
   },
   {
@@ -775,6 +845,11 @@
     "entity_type": "SELLER"
   },
   {
+    "x_handle": "WillMusic_X",
+    "entity_id": "willmusic",
+    "entity_type": "SELLER"
+  },
+  {
     "x_handle": "Withmuu_twt",
     "entity_id": "withmuu",
     "entity_type": "SELLER"
@@ -782,6 +857,11 @@
   {
     "x_handle": "yes24_official",
     "entity_id": "yes24",
+    "entity_type": "SELLER"
+  },
+  {
+    "x_handle": "ygselect",
+    "entity_id": "yg_select",
     "entity_type": "SELLER"
   }
 ]

@@ -53,7 +53,7 @@ log = logging.getLogger("curate_tour")
 RAW_TABLE = f"{PROJECT_ID}.{DATASET}.x_posts_raw"
 TOUR_TABLE = f"{PROJECT_ID}.{DATASET}.x_tour_announcements"
 
-MODEL = os.environ.get("TOUR_CURATION_MODEL", "claude-sonnet-5")
+MODEL = os.environ.get("TOUR_CURATION_MODEL", "gpt-5.6-terra")
 # 모델 이름이 프로바이더를 정한다. llm_client.resolve_provider 참고.
 MAX_OUTPUT_TOKENS = int(os.environ.get("TOUR_MAX_OUTPUT_TOKENS", "8000"))
 BATCH_SIZE = int(os.environ.get("TOUR_BATCH_SIZE", "12"))
