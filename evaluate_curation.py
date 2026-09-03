@@ -18,7 +18,7 @@ data-external-crawler/evaluate_curation.py
 
 돌리는 곳:
   GitHub Actions > "Curation Eval" > Run workflow  ← 권장. 시크릿이 이미 거기 있다.
-  로컬은 pip install -r requirements.txt + GCP_SERVICE_ACCOUNT_JSON + ANTHROPIC_API_KEY 필요.
+  로컬은 pip install -r requirements.txt + GCP_SERVICE_ACCOUNT_JSON + (ANTHROPIC_API_KEY 또는 OPENAI_API_KEY) 필요.
 
 사용:
   python evaluate_curation.py
@@ -29,10 +29,10 @@ import argparse, json, os, sys
 from collections import defaultdict
 
 from google.cloud import bigquery
-import anthropic
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import curate_events as ce  # noqa: E402
+import curate_events as ce
+import llm_client  # noqa: E402
 from bq_common import get_bq_client  # noqa: E402
 
 PROJECT = "makestar-dw"
@@ -226,7 +226,7 @@ def main():
           % (len(rows), len(by_handle), MODEL, args.few_shot))
     print("system prompt %d자" % len(system))
 
-    ac = anthropic.Anthropic()
+    ac = llm_client.get_client(MODEL)
     detail, agg = [], defaultdict(lambda: dict(n=0, hit=0, fp=0, fn=0, t_hit=0, t_n=0))
     done = 0
 

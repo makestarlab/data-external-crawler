@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       curation_model:
-        description: '큐레이션 모델 override (비워두면 기본값=Sonnet 5). 예: claude-haiku-4-5-20251001'
+        description: '큐레이션 모델 override (비워두면 기본값=Sonnet 5). 예: gpt-5.6-terra'
         required: false
         default: ''
 
@@ -38,6 +38,7 @@ jobs:
       - name: Curate events (raw -> x_event_announcements)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
           # 기본은 Claude Sonnet 5 (curate_events.py 기본값과 동일). Haiku 4.5 대비 실제 데이터로
           # 비교 테스트한 결과 관련성 판단/추출 정확도가 유의미하게 나아서 기본값으로 승격함

@@ -17,7 +17,7 @@ x_posts_raw에서 아직 처리되지 않은(is_curated=FALSE) 포스팅을 Clau
     `x_event_announcements_curated` 뷰(WHERE is_relevant AND is_representative)를 쓰면 된다.
 
 필요한 환경변수(GitHub Secrets):
-  - ANTHROPIC_API_KEY : Claude API 키
+  - ANTHROPIC_API_KEY / OPENAI_API_KEY : CURATION_MODEL 이 고르는 쪽의 키
   - GCP_SERVICE_ACCOUNT_JSON : BigQuery 인증 (bq_common.py 참고)
 """
 import ast
@@ -31,9 +31,9 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-import anthropic
 from google.cloud import bigquery
 
+import llm_client
 from bq_common import PROJECT_ID, DATASET, get_bq_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -44,6 +44,8 @@ CURATED_TABLE = f"{PROJECT_ID}.{DATASET}.x_event_announcements"
 ENTITY_TABLE = f"{PROJECT_ID}.{DATASET}.entity_master"
 
 MODEL = os.environ.get("CURATION_MODEL", "claude-sonnet-5")
+# 모델 이름이 프로바이더를 정한다. llm_client.resolve_provider 참고.
+MAX_OUTPUT_TOKENS = int(os.environ.get("CURATION_MAX_OUTPUT_TOKENS", "16000"))
 RECENT_WINDOW_DAYS = 45   # 그룹 재사용 판단 시 참고할 "최근 대표 이벤트" 조회 기간
 #   [2026-08-13] 21 -> 45. 같은 이벤트 공지가 21일 넘게 띄엄띄엄 올라오면 뒤엣것이
 #   목록에서 빠져 "새 이벤트"로 잡히고, 같은 event_group_id에 대표가 둘 생겼다(29개 그룹).
@@ -570,16 +572,16 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
     # [2026-08-12] 재시도. 예전엔 429/529 한 번이면 예외가 위로 올라가
     #   그 계정 전체가 스킵됐다 (2026-08-12 재큐레이션에서 11개 계정 1,709건이 이렇게 남음).
     #   호출 수가 많은 계정일수록 확률이 높아 판매처가 집중적으로 당했다.
-    resp = None
+    payload, truncated = None, False
     for attempt in range(5):
         try:
-            resp = client.messages.create(
-                model=MODEL,
-                max_tokens=16000,   # [2026-08-12] 4096 -> 16000. 응답이 잘려 배치가 통째로 유실됐다
+            # max_tokens 16000: [2026-08-12] 4096 이었을 때 응답이 잘려 배치가 통째로 유실됐다
+            payload, truncated = llm_client.call_tool(
+                client, MODEL,
                 system=build_system_prompt(),
-                tools=[TOOL_SCHEMA],
-                tool_choice={"type": "tool", "name": "extract_event_announcements"},
-                messages=[{"role": "user", "content": user_msg}],
+                user=user_msg,
+                tool_schema=TOOL_SCHEMA,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
             break
         except Exception as e:
@@ -587,52 +589,51 @@ def call_claude(client, x_handle, entity_type, known_artist_name, artist_roster,
             # [2026-08-24] 400 계열은 재시도해도 같은 답이 온다. 즉시 포기하고,
             #   무엇보다 서버가 준 메시지를 그대로 남긴다.
             if _is_permanent(e):
-                log.error("%s: Claude 호출 실패 - 재시도해도 같은 오류 (%s). 이 배치 %d건 미처리. 상세: %s",
+                log.error("%s: 모델 호출 실패 - 재시도해도 같은 오류 (%s). 이 배치 %d건 미처리. 상세: %s",
                           x_handle, type(e).__name__, len(tweets), detail)
                 return []
             if attempt == 4:
-                log.error("%s: Claude 호출 5회 모두 실패 (%s). 이 배치 %d건은 미처리로 남깁니다. 상세: %s",
+                log.error("%s: 모델 호출 5회 모두 실패 (%s). 이 배치 %d건은 미처리로 남깁니다. 상세: %s",
                           x_handle, type(e).__name__, len(tweets), detail)
                 return []
             wait = 2 ** attempt * 3          # 3, 6, 12, 24초
-            log.warning("%s: Claude 호출 실패 (%s), %d초 후 재시도 (%d/5). 상세: %s",
+            log.warning("%s: 모델 호출 실패 (%s), %d초 후 재시도 (%d/5). 상세: %s",
                         x_handle, type(e).__name__, wait, attempt + 1, detail)
             time.sleep(wait)
-    if getattr(resp, "stop_reason", None) == "max_tokens":
-        log.error("%s: 응답이 max_tokens에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
+    if truncated:
+        log.error("%s: 응답이 출력 상한에서 잘렸습니다. 트윗 %d건이 누락될 수 있습니다.",
                   x_handle, len(tweets))
-    for block in resp.content:
-        if block.type == "tool_use" and block.name == "extract_event_announcements":
-            raw_results = block.input.get("results") or []
-            coerced = _coerce_results(raw_results, x_handle)
-            if coerced is None:
-                # [2026-08-24] 실제로 뭐가 왔는지 앞부분을 같이 남긴다. 타입 이름만으로는
-                #   응답이 잘린 건지 형식만 다른 건지 알 수 없다.
-                _rr = raw_results if isinstance(raw_results, str) else repr(raw_results)
-                log.error("%s: results를 배열로 해석할 수 없습니다 (%s, 길이 %d). 이 배치 %d건 미처리.\n"
-                          "  앞부분: %.200s\n  뒷부분: %.200s",
-                          x_handle, type(raw_results).__name__, len(_rr), len(tweets),
-                          _rr, _rr[-200:])
-                return []
-            raw_results = coerced
-            # [2026-08-13] 모델이 배열 안에 딕셔너리 대신 문자열을 하나 섞어 보내는 일이
-            #   드물게 있다. 그대로 두면 build_curated_rows에서 TypeError가 나고
-            #   계정 하나가 통째로 스킵된다 (EVERLINESHOP 366건, NCTsmtown 382건 등).
-            #   여기서 걸러내면 나머지 정상 항목은 살고, 걸러진 트윗은
-            #   결과에 안 담겼으므로 다음 실행에서 자동 재시도된다.
-            results, bad = [], 0
-            for r in raw_results:
-                if isinstance(r, dict) and r.get("tweet_id"):
-                    results.append(r)
-                else:
-                    bad += 1
-            if bad:
-                log.warning("%s: 형식이 어긋난 결과 %d건을 건너뜁니다 (예: %r)",
-                            x_handle, bad,
-                            next((r for r in raw_results
-                                  if not (isinstance(r, dict) and r.get("tweet_id"))), None))
-            return results
-    log.warning("%s: 응답에 tool_use 블록이 없습니다. 트윗 %d건 결과 없음.", x_handle, len(tweets))
+    if payload is not None:
+        raw_results = payload.get("results") or []
+        coerced = _coerce_results(raw_results, x_handle)
+        if coerced is None:
+            # [2026-08-24] 실제로 뭐가 왔는지 앞부분을 같이 남긴다. 타입 이름만으로는
+            #   응답이 잘린 건지 형식만 다른 건지 알 수 없다.
+            _rr = raw_results if isinstance(raw_results, str) else repr(raw_results)
+            log.error("%s: results를 배열로 해석할 수 없습니다 (%s, 길이 %d). 이 배치 %d건 미처리.\n"
+                      "  앞부분: %.200s\n  뒷부분: %.200s",
+                      x_handle, type(raw_results).__name__, len(_rr), len(tweets),
+                      _rr, _rr[-200:])
+            return []
+        raw_results = coerced
+        # [2026-08-13] 모델이 배열 안에 딕셔너리 대신 문자열을 하나 섞어 보내는 일이
+        #   드물게 있다. 그대로 두면 build_curated_rows에서 TypeError가 나고
+        #   계정 하나가 통째로 스킵된다 (EVERLINESHOP 366건, NCTsmtown 382건 등).
+        #   여기서 걸러내면 나머지 정상 항목은 살고, 걸러진 트윗은
+        #   결과에 안 담겼으므로 다음 실행에서 자동 재시도된다.
+        results, bad = [], 0
+        for r in raw_results:
+            if isinstance(r, dict) and r.get("tweet_id"):
+                results.append(r)
+            else:
+                bad += 1
+        if bad:
+            log.warning("%s: 형식이 어긋난 결과 %d건을 건너뜁니다 (예: %r)",
+                        x_handle, bad,
+                        next((r for r in raw_results
+                              if not (isinstance(r, dict) and r.get("tweet_id"))), None))
+        return results
+    log.warning("%s: 응답에 도구 호출이 없습니다. 트윗 %d건 결과 없음.", x_handle, len(tweets))
     return []
 
 
@@ -784,7 +785,7 @@ def chunked(items, n):
 
 def main():
     bq = get_bq_client()
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = llm_client.get_client(MODEL)
 
     name_to_id, id_to_name, artist_roster = load_entity_lookup(bq)
     by_handle = fetch_uncurated_by_handle(bq)

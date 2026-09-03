@@ -284,6 +284,33 @@ check(ct.CONFIDENCE_REVIEW_THRESHOLD <= 0.6,
       f"confidence 문턱이 0.6 이하 (현재 {ct.CONFIDENCE_REVIEW_THRESHOLD})")
 
 
+
+print("\n[PROMOTER 계정 처리]")
+# 프로모터 계정 공지에서 아티스트를 못 뽑으면, 계정 엔티티를 아티스트로 넣으면 안 된다.
+promoter_raw = {
+    "tweet_id": "9001", "x_handle": "hello82PRESENTS", "entity_id": "hello82",
+    "entity_type": "PROMOTER", "tweet_text": "Tickets on sale now!",
+    "tweet_url": "https://x.com/hello82PRESENTS/status/9001",
+    "tweet_created_at": datetime(2026, 9, 1, tzinfo=timezone.utc), "entities_json": None,
+}
+res_no_artist = {"tweet_id": "9001", "is_relevant": True, "confidence": 0.8,
+                 "announcement_kind": "TICKET_OPEN", "artist_names": [],
+                 "tour_name": "SOME TOUR", "event_type": "콘서트/투어", "shows": []}
+rows = ct.build_rows("hello82PRESENTS", {"9001": promoter_raw}, [res_no_artist],
+                     {}, "2026-09-02", "2026-09-02T00:00:00Z")
+check(rows[0]["artist_entity_ids"] == [],
+      "프로모터 공지는 계정 엔티티를 아티스트로 넣지 않음")
+check(rows[0]["needs_review"] and "프로모터" in (rows[0]["review_reason"] or ""),
+      "아티스트 특정 실패는 확인 필요로 올라감")
+
+# 같은 상황에서 ARTIST 계정이면 기존 자기참조 폴백이 그대로 살아 있어야 한다.
+artist_raw = dict(promoter_raw, x_handle="Stray_Kids", entity_id="stray_kids",
+                  entity_type="ARTIST")
+rows2 = ct.build_rows("Stray_Kids", {"9001": artist_raw}, [res_no_artist],
+                      {}, "2026-09-02", "2026-09-02T00:00:00Z")
+check(rows2[0]["artist_entity_ids"] == ["stray_kids"],
+      "아티스트 계정은 자기참조 폴백 유지")
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")
