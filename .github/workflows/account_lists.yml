@@ -1,0 +1,48 @@
+name: Account Lists
+
+# 아티스트별 X·인스타그램·공식사이트 링크를 Wikidata 에서 모은다.
+# 미주유럽사업팀이 손으로 만들던 리스트다.
+#
+# 여기서 도는 이유: query.wikidata.org 가 클라우드 컨테이너와 데스크톱 VM 에서는
+# 403 으로 막혀 있다. GitHub Actions 러너는 열려 있다.
+#
+# 주 1회면 충분하다. 아티스트 계정이 매일 바뀌지 않는다.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '1 이면 CSV 만 만들고 BigQuery 적재는 건너뛴다'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 20 * * 0'   # 매주 월요일 05:00 KST
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build account lists
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          ACCOUNT_LIST_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          # Wikidata 이용 규약상 연락처가 있는 User-Agent 가 필요하다. 익명은 차단된다.
+          WIKIDATA_USER_AGENT: 'makestar-tour-monitor/1.0 (https://github.com/makestarlab/data-external-crawler; kch@makestar.com)'
+        run: python build_account_lists.py
+
+      - name: Upload CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-lists
+          path: account_lists.csv
+          if-no-files-found: warn
