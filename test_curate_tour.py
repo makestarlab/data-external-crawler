@@ -311,6 +311,29 @@ rows2 = ct.build_rows("Stray_Kids", {"9001": artist_raw}, [res_no_artist],
 check(rows2[0]["artist_entity_ids"] == ["stray_kids"],
       "아티스트 계정은 자기참조 폴백 유지")
 
+
+print("\n[프로모터 계정 프롬프트]")
+tw = [{"tweet_id": "1", "tweet_created_at": _dt(2026, 9, 8, tzinfo=_tz.utc),
+       "tweet_text": "2026 KIM JI WON ASIA FANMEETING TOUR <WONEDERLAND> in TAIPEI"}]
+
+msg_p = ct.build_user_message("applewood_kr", "applewood_kr", tw, is_promoter=True)
+check("주최사" in msg_p or "프로모터" in msg_p, "프로모터 계정임을 알린다")
+check("본인의 공식 계정입니다" not in msg_p,
+      "프로모터에게 '본인의 공식 계정' 이라고 말하지 않는다 "
+      "(2026-09-08 실측 오류의 직접 원인)")
+check("applewood_kr" in msg_p.split("분석할 신규 포스팅")[0],
+      "핸들은 문맥으로 알려주되")
+check("넣지 마세요" in msg_p, "핸들을 artist_names 에 넣지 말라고 명시")
+check("KIM JI WON" in msg_p, "트윗 본문은 그대로 들어간다")
+
+msg_a = ct.build_user_message("Stray_Kids", "Stray Kids", tw, is_promoter=False)
+check("본인의 공식 계정입니다" in msg_a, "아티스트 계정에는 기존 문구 유지")
+check("프로모터" not in msg_a, "아티스트 계정에는 프로모터 문구가 안 붙는다")
+
+# 기본값은 아티스트로 동작해야 한다 (기존 호출부 호환)
+check(ct.build_user_message("Stray_Kids", "Stray Kids", tw) == msg_a,
+      "is_promoter 기본값은 False")
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")

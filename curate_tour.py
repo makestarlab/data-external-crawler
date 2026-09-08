@@ -410,7 +410,7 @@ def repair_tweet_ids(results, tweets, x_handle):
     return results, repaired
 
 
-def build_user_message(x_handle, known_artist_name, tweets):
+def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False):
     """Claude 에 보낼 사용자 메시지를 만든다.
 
     함수로 뺀 이유: [2026-09-01] 이 안에서 변수 섀도잉 사고가 났다.
@@ -419,9 +419,14 @@ def build_user_message(x_handle, known_artist_name, tweets):
     "트윗 본문 없이 아티스트명만 제공되어 판단 불가" 라고 답했고 1,749건이 통째로 날아갔다.
     조립을 함수로 분리해 두면 "메시지에 본문이 들어 있는가" 를 테스트로 못 박을 수 있다.
 
-    로스터를 아예 안 넣는다. curate_tour 는 ARTIST 계정만 처리하고 계정 주인은 이미
-    알고 있으므로, 수백 줄짜리 명단 대신 그 아티스트 이름 한 줄이면 충분하다.
-    (curate_events 도 로스터는 SELLER 계정에만 넣는다)
+    로스터를 아예 안 넣는다. 계정 주인은 이미 알고 있으므로 수백 줄짜리 명단 대신
+    그 이름 한 줄이면 충분하다. (curate_events 도 로스터는 SELLER 계정에만 넣는다)
+
+    [2026-09-08] is_promoter 를 받는다. 프로모터·레이블 계정에도 "이 계정은 X 본인의
+    공식 계정입니다, artist_names 는 ['X'] 로 두세요" 를 그대로 넣고 있었다. 그래서
+    applewood_kr / Wanxing_ent / hello82PRESENTS 가 아티스트명 자리에 들어갔다.
+    투어명에 KIM JI WON, EUNHYUK 이 버젓이 적혀 있는데도 모델은 시킨 대로 한 것이다.
+    프로모터 계정에는 반대로 "주최자이지 출연자가 아니다" 를 명시한다.
     """
     tweet_lines = []
     for t in tweets:
@@ -430,7 +435,15 @@ def build_user_message(x_handle, known_artist_name, tweets):
         tweet_lines.append(f"- tweet_id: {t['tweet_id']} | 작성일: {created}\n  본문: {body}")
 
     header = [f"계정: @{x_handle}"]
-    if known_artist_name:
+    if is_promoter:
+        header.append(
+            f"이 계정(@{x_handle})은 공연 주최사·프로모터·레이블 계정입니다. "
+            f"계정 주인은 공연을 여는 쪽이지 무대에 서는 아티스트가 아닙니다. "
+            f"artist_names 에는 반드시 본문이나 투어명에 적힌 실제 출연 아티스트를 넣으세요. "
+            f"계정 이름이나 핸들(@{x_handle})을 artist_names 에 넣지 마세요. "
+            f"아티스트를 특정할 수 없으면 artist_names 를 빈 배열로 두세요 - "
+            f"사람이 확인 큐에서 채웁니다.")
+    elif known_artist_name:
         header.append(f"이 계정은 {known_artist_name} 본인의 공식 계정입니다. "
                       f"artist_names 는 특별한 사정이 없으면 ['{known_artist_name}'] 로 두세요.")
     header.append(f"아래 '분석할 신규 포스팅 목록' 의 {len(tweets)}건 각각에 대해 결과를 "
@@ -446,9 +459,9 @@ def build_user_message(x_handle, known_artist_name, tweets):
     return "\n".join(header) + "\n\n분석할 신규 포스팅 목록:\n" + "\n".join(tweet_lines)
 
 
-def call_model(client, x_handle, known_artist_name, tweets):
+def call_model(client, x_handle, known_artist_name, tweets, is_promoter=False):
     """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
-    user_msg = build_user_message(x_handle, known_artist_name, tweets)
+    user_msg = build_user_message(x_handle, known_artist_name, tweets, is_promoter)
 
     delay = 2
     for attempt in range(1, MAX_RETRIES + 1):
@@ -681,8 +694,10 @@ def main():
             # id_to_name 은 한글명을 돌려줘서 그대로 쓰면 '스트레이 키즈' 같은 값이 들어간다.
             known_artist_name = (name_en_by_id.get(owner_entity) or id_to_name.get(owner_entity)
                                  if owner_entity else None)
+            # 프로모터 계정은 계정 주인 = 아티스트가 아니다. 프롬프트 문구가 갈린다.
+            is_promoter = any(t.get("entity_type") == "PROMOTER" for t in tweets)
             for batch in chunked(tweets, BATCH_SIZE):
-                results = call_model(client, x_handle, known_artist_name, batch)
+                results = call_model(client, x_handle, known_artist_name, batch, is_promoter)
                 calls += 1
                 all_rows.extend(build_rows(x_handle, raw_by_id, results,
                                            name_to_id, run_date, extracted_at))
