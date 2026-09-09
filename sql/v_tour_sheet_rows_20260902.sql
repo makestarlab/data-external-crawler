@@ -111,3 +111,13 @@ SELECT
   show_key, x_handle, needs_review, confidence, announcement_kinds,
   base.venue_status, base.capacity_source, base.venue_capacity_uncertain
 FROM base LEFT JOIN ip USING (show_key);
+
+-- [2026-09-09] 이 파일의 뷰가 BigQuery 에 배포되어 있지 않았다.
+--   2026-09-03 에 venue_master 조인을 추가해 이 파일을 고쳤지만
+--   CREATE OR REPLACE VIEW 를 실제로 실행하지 않아서, 운영 뷰는 그 이전 버전이었다.
+--   결과: 공연 규모 칸이 6일 동안 조용히 전부 비어 있었다(30건 유실).
+--   export_tour_sheet.py 가 venue_status / capacity_source 를 읽으므로
+--   실행하면 에러가 났을 텐데, 그 사이 스크립트를 돌린 적이 없어 드러나지 않았다.
+--
+--   레포의 SQL 파일과 배포된 뷰가 갈라져도 아무도 모른다는 게 진짜 문제다.
+--   뷰 정의를 INFORMATION_SCHEMA.VIEWS 와 대조하는 점검을 워크플로에 넣어야 한다.
