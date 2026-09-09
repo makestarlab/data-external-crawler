@@ -130,6 +130,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "BPM_LMJ",
+    "entity_id": "lee_mujin",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "btob2mh",
     "entity_id": "huta",
     "entity_type": "ARTIST"
@@ -182,6 +187,16 @@
   {
     "x_handle": "day6official",
     "entity_id": "day6",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "DAYOUNG_offcl",
+    "entity_id": "wjsn_dayoung",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "defjaybkr",
+    "entity_id": "jay_b",
     "entity_type": "ARTIST"
   },
   {
@@ -510,6 +525,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "p_rockyent",
+    "entity_id": "rocky",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "plave_jp",
     "entity_id": "plave",
     "entity_type": "ARTIST"
@@ -645,6 +665,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "upperroomlabel",
+    "entity_id": "nct_mark",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "WayV_official",
     "entity_id": "wayv",
     "entity_type": "ARTIST"
@@ -697,6 +722,11 @@
   {
     "x_handle": "YENA_OFFICIAL",
     "entity_id": "yena",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "YERIN_OFFICIAL_",
+    "entity_id": "yerin",
     "entity_type": "ARTIST"
   },
   {

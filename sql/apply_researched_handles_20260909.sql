@@ -45,3 +45,54 @@ WHERE t.entity_id = s.entity_id AND t.entity_type = 'ARTIST';
 
 -- 마스터에 아직 넣지 않은 3팀 (확신도 중간, 신규): Jessi(jessicah_oo), 다영/우주소녀(DAYOUNG_offcl), 이무진(BPM_LMJ)
 -- 팀 확인 후 2번 블록과 같은 방식으로 INSERT 한다.
+
+-- ============================================================
+-- [2026-09-09 추가] 확신도 '중간' 8팀에 대한 팀 확인 결과 반영
+-- 포함 6팀 / 제외 2팀
+-- ============================================================
+
+-- 5) 팀 확인으로 확정된 4팀 (기존 마스터 등재)
+--    Jay B 는 조사 결과 jaybnow_hr 이었으나, 본인이 defjaybkr 로 개명한 것이 확인됨.
+--    X/틱톡/유튜브/인스타그램을 동시에 개명한 케이스라 옛 핸들이 검색 상위에 남아 있었다.
+UPDATE `makestar-dw.makestar_ax.entity_master` t
+SET x_handle = s.h, x_profile_url = CONCAT('https://x.com/', s.h),
+    confirmation_status = 'CONFIRMED', notes = s.note,
+    last_verified_date = DATE '2026-09-09', updated_at = CURRENT_TIMESTAMP()
+FROM (SELECT * FROM UNNEST([
+  STRUCT('yerin' AS entity_id, 'YERIN_OFFICIAL_' AS h, '2026-09-09 팀 확인 완료. official_yerin 과 병존하나 본 계정 사용' AS note),
+  STRUCT('jay_b' AS entity_id, 'defjaybkr' AS h, '2026-09-09 팀 확인 완료. 구 핸들 jaybnow_hr 을 본인이 defjaybkr 로 개명(같은 계정). 틱톡/유튜브/인스타도 동시 개명' AS note),
+  STRUCT('rocky' AS entity_id, 'p_rockyent' AS h, '2026-09-09 팀 확인 완료. 본인 설립 원이진엔터테인먼트 운영' AS note),
+  STRUCT('nct_mark' AS entity_id, 'upperroomlabel' AS h, '2026-09-09 팀 확인 완료. 2026-04 NCT 탈퇴 후 1인 기획사 Upper Room 계정. 개인 명의 계정은 없음' AS note)
+])) s
+WHERE t.entity_id = s.entity_id AND t.entity_type = 'ARTIST';
+
+-- 6) 팀 확인으로 확정된 2팀 (마스터 신규 등록)
+INSERT INTO `makestar-dw.makestar_ax.entity_master`
+  (entity_id, entity_type, artist_subtype, name, name_en, aliases, x_handle, x_profile_url,
+   confirmation_status, notes, last_verified_date, created_at, updated_at)
+VALUES
+  ('wjsn_dayoung', 'ARTIST', 'SOLO', '다영', 'Dayoung', ['DAYOUNG', '우주소녀 다영', 'WJSN DAYOUNG', '김다영'],
+   'DAYOUNG_offcl', 'https://x.com/DAYOUNG_offcl', 'CONFIRMED',
+   '2026-09-09 팀 확인 완료. 우주소녀(WJSN) 멤버 솔로. 인스타 dayoung_offcl / 유튜브 DAYOUNG_official 과 동일 네이밍',
+   DATE '2026-09-09', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()),
+  ('lee_mujin', 'ARTIST', 'SOLO', '이무진', 'Lee Mujin', ['LEE MUJIN', '이무진'],
+   'BPM_LMJ', 'https://x.com/BPM_LMJ', 'CONFIRMED',
+   '2026-09-09 팀 확인 완료. 핸들은 전 소속사 빅플래닛메이드 기반. 2026-08 신생 레이블 물음표 이적 후 신규 계정 개설 시 핸들 교체 필요',
+   DATE '2026-09-09', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP());
+
+-- 7) 팀 판단으로 제외한 2팀
+--    핸들을 넣지 않는 것 자체가 결정이므로, 왜 뺐는지를 마스터에 남긴다.
+UPDATE `makestar-dw.makestar_ax.entity_master`
+SET confirmation_status = 'UNCERTAIN', represented_by_handle = 'SJofficial',
+    notes = '2026-09-09 팀 판단으로 수집 제외. 후보 heezzinpang(2013년 본인 개설)은 인스타그램 중심 활동으로 휴면 추정. 공연 소식은 슈퍼주니어 공식(SJofficial)으로 커버',
+    last_verified_date = DATE '2026-09-09', updated_at = CURRENT_TIMESTAMP()
+WHERE entity_id = 'heechul' AND entity_type = 'ARTIST';
+
+INSERT INTO `makestar-dw.makestar_ax.entity_master`
+  (entity_id, entity_type, artist_subtype, name, name_en, aliases,
+   confirmation_status, notes, last_verified_date, created_at, updated_at)
+VALUES
+  ('jessi', 'ARTIST', 'SOLO', '제시', 'Jessi', ['JESSI', '제시', 'Jessica Ho'],
+   'UNCERTAIN',
+   '2026-09-09 팀 판단으로 수집 제외. 후보 jessicah_oo 는 인스타 핸들과 일치하나 공식 사이트 링크로 교차확인되지 않음. 시트에 향후 공연 4건 있어 재조사 대상',
+   DATE '2026-09-09', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP());
