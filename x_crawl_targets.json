@@ -1,5 +1,10 @@
 [
   {
+    "x_handle": "82MAJOR_231011",
+    "entity_id": "82major",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "8TURN_official",
     "entity_id": "8turn",
     "entity_type": "ARTIST"
@@ -25,6 +30,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "ALL_H_OURS",
+    "entity_id": "allhours",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "ALLDAY_PROJECT",
     "entity_id": "allday_project",
     "entity_type": "ARTIST"
@@ -40,8 +50,18 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "Apink_2011",
+    "entity_id": "apink",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "Apinkjej",
     "entity_id": "jungeunji",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "ASC2NT_OFFICIAL",
+    "entity_id": "asc2nt",
     "entity_type": "ARTIST"
   },
   {
@@ -55,8 +75,23 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "BabyDONTCry_BDC",
+    "entity_id": "baby_dont_cry",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "BAEKHYUN_INB100",
     "entity_id": "exo_baekhyun",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "BamBam1A",
+    "entity_id": "bambam",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "BANDLUCY_mystic",
+    "entity_id": "lucy",
     "entity_type": "ARTIST"
   },
   {
@@ -65,8 +100,23 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "BEFIRSTofficial",
+    "entity_id": "befirst",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "BI_131official",
+    "entity_id": "bi",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "BLACKPINK",
     "entity_id": "blackpink",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "BOL4_Official",
+    "entity_id": "bol4",
     "entity_type": "ARTIST"
   },
   {
@@ -110,8 +160,23 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "cosmosy_x",
+    "entity_id": "cosmosy",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "CRAVITYstarship",
     "entity_id": "cravity",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "CUBE_LIGHTSUM",
+    "entity_id": "lightsum",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "CUBE_NOWZ",
+    "entity_id": "nowz",
     "entity_type": "ARTIST"
   },
   {
@@ -120,8 +185,28 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "DragonPony_",
+    "entity_id": "dragon_pony",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "ENHYPEN",
     "entity_id": "enhypen",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "everglow_offcl",
+    "entity_id": "everglow",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "GIRLSETofficial",
+    "entity_id": "girlset",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "h_evva_n",
+    "entity_id": "evan",
     "entity_type": "ARTIST"
   },
   {
@@ -150,6 +235,16 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "idntt_cosmo",
+    "entity_id": "idntt",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "ifeye_official",
+    "entity_id": "ifeye",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "iKONIC_143",
     "entity_id": "ikon",
     "entity_type": "ARTIST"
@@ -157,6 +252,11 @@
   {
     "x_handle": "ILLIT_official",
     "entity_id": "illit",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "ioi_10th",
+    "entity_id": "ioi",
     "entity_type": "ARTIST"
   },
   {
@@ -180,6 +280,16 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "jinhojo_x",
+    "entity_id": "jinho",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "JUSTB_Official",
+    "entity_id": "just_b",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "JYPETWICE",
     "entity_id": "twice",
     "entity_type": "ARTIST"
@@ -195,8 +305,28 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "Keyveatz",
+    "entity_id": "keyveatz",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "KEYVITUP_inkode",
+    "entity_id": "keyvitup",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "kickflip_jype",
     "entity_id": "kickflip",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "KISSOFLIFE_S2",
+    "entity_id": "kiss_of_life",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "krungy21",
+    "entity_id": "sandara_park",
     "entity_type": "ARTIST"
   },
   {
@@ -205,13 +335,28 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "LeeCS_Official",
+    "entity_id": "lee_chang_sub",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "LNGSHOT4sho",
     "entity_id": "lngshot",
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "LYM_offcl",
+    "entity_id": "lim_young_min",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "MADEIN_U",
     "entity_id": "madein",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "marktuan",
+    "entity_id": "mark_tuan",
     "entity_type": "ARTIST"
   },
   {
@@ -265,6 +410,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "official_akmu",
+    "entity_id": "akmu",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "official_artms",
     "entity_id": "artms",
     "entity_type": "ARTIST"
@@ -290,6 +440,11 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "official_junhee",
+    "entity_id": "junhee",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "official_kiiras",
     "entity_id": "kiiras",
     "entity_type": "ARTIST"
@@ -297,6 +452,26 @@
   {
     "x_handle": "OFFICIAL_MEOVV",
     "entity_id": "meovv",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "official_ONEUS",
+    "entity_id": "oneus",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "official_ONEWE",
+    "entity_id": "onewe",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "official_QWER",
+    "entity_id": "qwer",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "official_sunmi_",
+    "entity_id": "sunmi",
     "entity_type": "ARTIST"
   },
   {
@@ -360,6 +535,16 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "realfromis_9",
+    "entity_id": "fromis_9",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "RESCENEofficial",
+    "entity_id": "rescene",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "RIIZE_JPN",
     "entity_id": "riize",
     "entity_type": "ARTIST"
@@ -372,6 +557,11 @@
   {
     "x_handle": "RVsmtown",
     "entity_id": "redvelvet",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "shaunthehuman",
+    "entity_id": "shaun",
     "entity_type": "ARTIST"
   },
   {
@@ -410,8 +600,18 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "THEBOYZ_officl",
+    "entity_id": "the_boyz",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "TheRose_0803",
     "entity_id": "the_rose",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "TPST__official",
+    "entity_id": "tempest",
     "entity_type": "ARTIST"
   },
   {
@@ -437,6 +637,11 @@
   {
     "x_handle": "TXT_bighit",
     "entity_id": "txt",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "UNIS_offcl",
+    "entity_id": "unis",
     "entity_type": "ARTIST"
   },
   {
@@ -485,6 +690,16 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "XLOV_official",
+    "entity_id": "xlov",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "YENA_OFFICIAL",
+    "entity_id": "yena",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "YG_GlobalVIP",
     "entity_id": "bigbang",
     "entity_type": "ARTIST"
@@ -500,8 +715,18 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "YOONSANHA_offcl",
+    "entity_id": "yoon_sanha",
+    "entity_type": "ARTIST"
+  },
+  {
     "x_handle": "youngposseup",
     "entity_id": "young_posse",
+    "entity_type": "ARTIST"
+  },
+  {
+    "x_handle": "YOUNITE_offcl",
+    "entity_id": "younite",
     "entity_type": "ARTIST"
   },
   {
