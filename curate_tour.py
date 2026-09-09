@@ -228,7 +228,7 @@ def fetch_candidate_posts(bq):
                r.tweet_created_at, r.entities_json
         FROM `{RAW_TABLE}` r
         LEFT JOIN (SELECT DISTINCT tweet_id FROM `{TOUR_TABLE}`) d USING (tweet_id)
-        WHERE r.entity_type IN ('ARTIST', 'PROMOTER')
+        WHERE r.entity_type IN ('ARTIST', 'PROMOTER', 'COMMUNITY')
           AND NOT IFNULL(r.is_retweet, FALSE)
           AND r.run_date >= @cutoff
           AND d.tweet_id IS NULL
@@ -410,7 +410,8 @@ def repair_tweet_ids(results, tweets, x_handle):
     return results, repaired
 
 
-def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False):
+def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False,
+                       is_community=False):
     """Claude 에 보낼 사용자 메시지를 만든다.
 
     함수로 뺀 이유: [2026-09-01] 이 안에서 변수 섀도잉 사고가 났다.
@@ -427,6 +428,12 @@ def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False):
     applewood_kr / Wanxing_ent / hello82PRESENTS 가 아티스트명 자리에 들어갔다.
     투어명에 KIM JI WON, EUNHYUK 이 버젓이 적혀 있는데도 모델은 시킨 대로 한 것이다.
     프로모터 계정에는 반대로 "주최자이지 출연자가 아니다" 를 명시한다.
+
+    [2026-09-09] COMMUNITY(팬 커뮤니티) 계정도 같은 분기를 탄다. 계정 주인이
+    아티스트가 아니라는 점은 프로모터와 같지만, 신뢰도가 다르다. 프로모터는
+    자기가 여는 공연을 알리는 1차 출처이고, 팬 커뮤니티는 남의 발표를 모아
+    옮기는 2차 출처다. 루머·미확정 정보가 섞이므로 build_rows 에서 무조건
+    확인 필요로 올린다.
     """
     tweet_lines = []
     for t in tweets:
@@ -435,7 +442,16 @@ def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False):
         tweet_lines.append(f"- tweet_id: {t['tweet_id']} | 작성일: {created}\n  본문: {body}")
 
     header = [f"계정: @{x_handle}"]
-    if is_promoter:
+    if is_community:
+        header.append(
+            f"이 계정(@{x_handle})은 팬 커뮤니티 계정입니다. 계정 주인은 아티스트도 "
+            f"주최사도 아니고, 다른 곳의 발표를 모아 옮기는 자리입니다. "
+            f"artist_names 에는 반드시 본문에 적힌 실제 출연 아티스트를 넣으세요. "
+            f"계정 이름이나 핸들(@{x_handle})을 artist_names 에 넣지 마세요. "
+            f"아티스트를 특정할 수 없으면 artist_names 를 빈 배열로 두세요. "
+            f"또한 이 계정의 글에는 확정 발표가 아닌 추측·루머·'~할 예정' 이 섞입니다. "
+            f"공식 발표로 확인되지 않은 내용은 confidence 를 낮게 주세요.")
+    elif is_promoter:
         header.append(
             f"이 계정(@{x_handle})은 공연 주최사·프로모터·레이블 계정입니다. "
             f"계정 주인은 공연을 여는 쪽이지 무대에 서는 아티스트가 아닙니다. "
@@ -459,9 +475,11 @@ def build_user_message(x_handle, known_artist_name, tweets, is_promoter=False):
     return "\n".join(header) + "\n\n분석할 신규 포스팅 목록:\n" + "\n".join(tweet_lines)
 
 
-def call_model(client, x_handle, known_artist_name, tweets, is_promoter=False):
+def call_model(client, x_handle, known_artist_name, tweets, is_promoter=False,
+               is_community=False):
     """계정 단위로 묶어서 한 번 호출한다. 같은 아티스트의 연속 공지를 한 문맥에서 보게 하려는 것."""
-    user_msg = build_user_message(x_handle, known_artist_name, tweets, is_promoter)
+    user_msg = build_user_message(x_handle, known_artist_name, tweets, is_promoter,
+                                  is_community)
 
     delay = 2
     for attempt in range(1, MAX_RETRIES + 1):
@@ -533,7 +551,10 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
         #   계정은 남의 공연을 알리는 자리라, 본문에서 아티스트를 못 뽑았을 때 계정
         #   엔티티를 넣으면 'hello82 의 투어' 같은 헛된 행이 생긴다. 차라리 비워두고
         #   아래에서 확인 필요로 올린다.
-        is_promoter = (raw.get("entity_type") == "PROMOTER")
+        # [2026-09-09] COMMUNITY(팬 커뮤니티)도 계정 주인이 아티스트가 아니다.
+        #   자기참조 폴백을 쓰면 'TouringAsiaPop 의 투어' 같은 행이 생긴다.
+        is_community = (raw.get("entity_type") == "COMMUNITY")
+        is_promoter = (raw.get("entity_type") == "PROMOTER") or is_community
         if not entity_ids and raw.get("entity_id") and not is_promoter:
             entity_ids = [raw["entity_id"]]
 
@@ -589,6 +610,13 @@ def build_rows(x_handle, raw_by_id, results, name_to_id, run_date, extracted_at)
                            else "entity_master 매칭 실패 - 로스터 등록 필요")
         if dropped_dates:
             reasons.append(f"날짜 파싱 실패 {dropped_dates}건")
+        # [2026-09-09] 팬 커뮤니티는 2차 출처다. 남의 발표를 옮기는 자리라
+        #   루머와 확정 발표가 같은 형식으로 올라오고, 본문만 봐서는 구분이 안 된다.
+        #   출처가 커뮤니티라는 사실 자체가 확인 사유이므로 무조건 큐에 올린다.
+        #   '경보는 개수가 아니라 실행 가능성' 원칙의 예외가 아니라 적용이다 -
+        #   여기서는 사람이 원문을 열어 확정 여부를 판단할 게 실제로 있다.
+        if is_community:
+            reasons.append("팬 커뮤니티 계정(2차 출처) - 공식 발표 여부 확인 필요")
 
         rows.append({
             "run_date": run_date,
@@ -696,8 +724,11 @@ def main():
                                  if owner_entity else None)
             # 프로모터 계정은 계정 주인 = 아티스트가 아니다. 프롬프트 문구가 갈린다.
             is_promoter = any(t.get("entity_type") == "PROMOTER" for t in tweets)
+            # 팬 커뮤니티도 계정 주인 = 아티스트가 아니지만, 프로모터와 달리 2차 출처다.
+            is_community = any(t.get("entity_type") == "COMMUNITY" for t in tweets)
             for batch in chunked(tweets, BATCH_SIZE):
-                results = call_model(client, x_handle, known_artist_name, batch, is_promoter)
+                results = call_model(client, x_handle, known_artist_name, batch,
+                                     is_promoter, is_community)
                 calls += 1
                 all_rows.extend(build_rows(x_handle, raw_by_id, results,
                                            name_to_id, run_date, extracted_at))

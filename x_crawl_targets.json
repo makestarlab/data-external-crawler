@@ -580,11 +580,6 @@
     "entity_type": "ARTIST"
   },
   {
-    "x_handle": "shaunthehuman",
-    "entity_id": "shaun",
-    "entity_type": "ARTIST"
-  },
-  {
     "x_handle": "SHINee",
     "entity_id": "shinee",
     "entity_type": "ARTIST"
@@ -775,6 +770,26 @@
     "entity_type": "ARTIST"
   },
   {
+    "x_handle": "hk_kpop_page",
+    "entity_id": "hk_kpop_page",
+    "entity_type": "COMMUNITY"
+  },
+  {
+    "x_handle": "kpopconcertseu",
+    "entity_id": "kpop_concerts_europe",
+    "entity_type": "COMMUNITY"
+  },
+  {
+    "x_handle": "TouringAsiaPop",
+    "entity_id": "touring_asia_pop",
+    "entity_type": "COMMUNITY"
+  },
+  {
+    "x_handle": "aegpresentsasia",
+    "entity_id": "aeg_presents_asia",
+    "entity_type": "PROMOTER"
+  },
+  {
     "x_handle": "AMAZE_KR",
     "entity_id": "amaze_kr",
     "entity_type": "PROMOTER"
@@ -805,8 +820,23 @@
     "entity_type": "PROMOTER"
   },
   {
+    "x_handle": "JNBCANADA",
+    "entity_id": "jnb_canada",
+    "entity_type": "PROMOTER"
+  },
+  {
     "x_handle": "LeoPresents",
     "entity_id": "leo_presents",
+    "entity_type": "PROMOTER"
+  },
+  {
+    "x_handle": "LiveNationKpop",
+    "entity_id": "livenation_kpop",
+    "entity_type": "PROMOTER"
+  },
+  {
+    "x_handle": "onionprdctn",
+    "entity_id": "onion_production",
     "entity_type": "PROMOTER"
   },
   {
@@ -817,6 +847,11 @@
   {
     "x_handle": "Wanxing_ent",
     "entity_id": "wanxing",
+    "entity_type": "PROMOTER"
+  },
+  {
+    "x_handle": "WeBookBands",
+    "entity_id": "webook_bands",
     "entity_type": "PROMOTER"
   },
   {

@@ -1,0 +1,20 @@
+-- [2026-09-09] 미주유럽사업팀 제공 계정 8개 추가 + SHAUN 오등록 정정
+--
+-- 1) 콘서트 운영사 5곳 -> PROMOTER
+--    Live Nation Kpop / JNB Canada / Onion Production / AEG Presents Asia / WeBook Bands
+--
+-- 2) 팬 커뮤니티 3곳 -> COMMUNITY (신규 entity_type)
+--    HK Kpop Page / Touring Asia Pop / Kpop Concerts Europe
+--
+--    왜 PROMOTER 로 안 넣었나: 계정 주인이 아티스트가 아니라는 점은 같지만 신뢰도가 다르다.
+--    프로모터는 자기가 여는 공연을 알리는 1차 출처고, 팬 커뮤니티는 남의 발표를 모아
+--    옮기는 2차 출처다. 확정 발표와 루머가 같은 형식으로 올라와 본문만으로 구분되지 않는다.
+--    한 바구니에 담으면 루머가 확정 공지와 같은 무게로 슬랙에 나간다.
+--    2026-09-03 에 PROMOTER 안에 아티스트 지역계정과 제3자 프로모터를 섞었다가
+--    TWS 일본 공연이 '아티스트 특정 실패' 로 뜬 것과 같은 종류의 실수다.
+--
+--    curate_tour.py 에서 COMMUNITY 는 (a) 자기참조 폴백 금지 (b) 무조건 확인 필요 로 다룬다.
+--
+-- 3) SHAUN 정정: shaunthehuman 은 인스타그램 핸들이었다. X 에는 동명의 무관한 계정
+--    (팔로워 11)이 있었고 v_roster_health 의 '핸들 의심' 경보가 이걸 잡아냈다.
+--    kprofiles 공식 SNS 목록에 X 항목 없음을 확인 -> 공식 X 계정 자체가 없다.

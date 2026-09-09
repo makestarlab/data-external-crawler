@@ -334,6 +334,58 @@ check("프로모터" not in msg_a, "아티스트 계정에는 프로모터 문�
 check(ct.build_user_message("Stray_Kids", "Stray Kids", tw) == msg_a,
       "is_promoter 기본값은 False")
 
+print("\n[COMMUNITY(팬 커뮤니티) 계정 처리]")
+# 팬 커뮤니티는 남의 발표를 옮기는 2차 출처다. 계정 주인이 아티스트가 아니라는 점은
+# 프로모터와 같지만, 확정 발표인지 루머인지 본문만으로 구분되지 않는다.
+# 그래서 아티스트를 제대로 뽑아냈더라도 무조건 확인 큐에 올라가야 한다.
+community_raw = {
+    "tweet_id": "9101", "x_handle": "TouringAsiaPop", "entity_id": "touring_asia_pop",
+    "entity_type": "COMMUNITY", "tweet_text": "STRAY KIDS coming to Bangkok in January!",
+    "tweet_url": "https://x.com/TouringAsiaPop/status/9101",
+    "tweet_created_at": datetime(2026, 9, 9, tzinfo=timezone.utc), "entities_json": None,
+}
+res_ok = {"tweet_id": "9101", "is_relevant": True, "confidence": 0.9,
+          "announcement_kind": "NEW_CITY", "artist_names": ["Stray Kids"],
+          "tour_name": "World Tour <RUN IT>", "event_type": "콘서트/투어",
+          "shows": [{"event_date": "2027-01-16", "city": "Bangkok", "country": "THAILAND",
+                     "venue_name": "Impact Arena"}]}
+rows_c = ct.build_rows("TouringAsiaPop", {"9101": community_raw}, [res_ok],
+                       {"stray kids": ("stray_kids", "ARTIST")}, "2026-09-09", "2026-09-09T00:00:00Z")
+check(rows_c[0]["artist_entity_ids"] == ["stray_kids"],
+      "본문의 아티스트는 정상적으로 매칭된다")
+check(rows_c[0]["needs_review"],
+      "날짜·도시·베뉴가 다 있어도 커뮤니티 출처면 확인 필요")
+check("커뮤니티" in (rows_c[0]["review_reason"] or ""),
+      "사유에 2차 출처임이 남는다")
+
+# 자기참조 폴백은 프로모터와 같이 금지된다.
+res_c_noartist = dict(res_ok, artist_names=[], shows=[])
+rows_c2 = ct.build_rows("TouringAsiaPop", {"9101": community_raw}, [res_c_noartist],
+                        {}, "2026-09-09", "2026-09-09T00:00:00Z")
+check(rows_c2[0]["artist_entity_ids"] == [],
+      "커뮤니티 계정도 계정 엔티티를 아티스트로 넣지 않음")
+
+# 같은 공지가 아티스트 계정에서 왔다면 확인 필요가 아니어야 한다 (커뮤니티만의 규칙임을 못박는다)
+artist_same = dict(community_raw, x_handle="Stray_Kids", entity_id="stray_kids",
+                   entity_type="ARTIST")
+rows_a = ct.build_rows("Stray_Kids", {"9101": artist_same}, [res_ok],
+                       {"stray kids": ("stray_kids", "ARTIST")}, "2026-09-09", "2026-09-09T00:00:00Z")
+check(not rows_a[0]["needs_review"],
+      "같은 내용이라도 아티스트 공식 계정이면 확인 필요가 아니다")
+
+
+print("\n[커뮤니티 계정 프롬프트]")
+msg_c = ct.build_user_message("TouringAsiaPop", "Touring Asia Pop", tw, is_community=True)
+check("팬 커뮤니티" in msg_c, "팬 커뮤니티 계정임을 알린다")
+check("본인의 공식 계정입니다" not in msg_c,
+      "커뮤니티에게 '본인의 공식 계정' 이라고 말하지 않는다")
+check("넣지 마세요" in msg_c, "핸들을 artist_names 에 넣지 말라고 명시")
+check("루머" in msg_c, "확정 발표가 아닐 수 있음을 알린다")
+check("KIM JI WON" in msg_c, "트윗 본문은 그대로 들어간다")
+check(ct.build_user_message("Stray_Kids", "Stray Kids", tw) == msg_a,
+      "is_community 기본값은 False")
+
+
 print()
 if FAIL:
     print(f"실패 {len(FAIL)}건:")

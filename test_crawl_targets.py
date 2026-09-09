@@ -22,7 +22,7 @@ print("[구성]")
 counts = Counter(t["entity_type"] for t in tg)
 print("  ", dict(counts), "총", len(tg))
 check(len(tg) > 0, "비어 있지 않음")
-check(set(counts) <= {"ARTIST", "SELLER", "PROMOTER"},
+check(set(counts) <= {"ARTIST", "SELLER", "PROMOTER", "COMMUNITY"},
       f"알려진 entity_type 만 사용 (현재 {sorted(counts)})")
 
 print("\n[필수 키]")
